@@ -84,7 +84,7 @@ const auth = {
             }
         } catch {}
         // Not authenticated — redirect to login
-        if (!window.location.pathname.endsWith('login.html')) {
+        if (!document.getElementById('login-page')) {
             window.location.href = '/';
         }
         return false;
@@ -101,6 +101,11 @@ const auth = {
     },
 
     async logout() {
+        // Close EventSource before clearing session
+        if (typeof app !== 'undefined' && app._eventSource) {
+            app._eventSource.close();
+            app._eventSource = null;
+        }
         await fetch('/api/auth/logout', { method: 'POST' });
         this.user = null;
         window.location.href = '/';

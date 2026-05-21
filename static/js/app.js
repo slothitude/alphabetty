@@ -120,14 +120,14 @@ const app = {
 
     initEventStream() {
         try {
-            const es = new EventSource('/api/events');
-            es.onmessage = (e) => {
+            this._eventSource = new EventSource('/api/events');
+            this._eventSource.onmessage = (e) => {
                 try {
                     const event = JSON.parse(e.data);
                     this.handleEvent(event);
                 } catch {}
             };
-            es.onerror = () => {
+            this._eventSource.onerror = () => {
                 // Reconnect is handled automatically by EventSource
             };
         } catch (e) {
