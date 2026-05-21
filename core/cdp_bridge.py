@@ -112,7 +112,7 @@ class CDPBridge:
         return tabs[0]["webSocketDebuggerUrl"]
 
     async def send_command(self, method: str, params: dict = None,
-                           tab_id: str = None) -> dict:
+                           tab_id: str = None, timeout: float = 30.0) -> dict:
         ws_url = await self.get_ws_url(tab_id)
         async with websockets.connect(ws_url, max_size=10 * 1024 * 1024) as ws:
             # Inject stealth JS on first connection to a page
@@ -124,7 +124,7 @@ class CDPBridge:
                         "method": "Page.addScriptToEvaluateOnNewDocument",
                         "params": {"source": STEALTH_JS},
                     }))
-                    await ws.recv()  # consume response
+                    await asyncio.wait_for(ws.recv(), timeout=timeout)
                     self._stealth_injected = True
                     logger.info("Stealth JS injected via CDP")
                 except Exception as e:
@@ -135,8 +135,40 @@ class CDPBridge:
             if params:
                 payload["params"] = params
             await ws.send(json.dumps(payload))
-            resp = json.loads(await ws.recv())
+            try:
+                raw = await asyncio.wait_for(ws.recv(), timeout=timeout)
+            except asyncio.TimeoutError:
+                raise TimeoutError(f"CDP command '{method}' timed out after {timeout}s")
+            resp = json.loads(raw)
             return resp.get("result", resp)
+
+    async def _send_on_ws(self, ws, method: str, params: dict = None,
+                          timeout: float = 30.0) -> dict:
+        """Send a CDP command on an existing WebSocket connection."""
+        msg_id = self._next_id()
+        payload = {"id": msg_id, "method": method}
+        if params:
+            payload["params"] = params
+        await ws.send(json.dumps(payload))
+        try:
+            raw = await asyncio.wait_for(ws.recv(), timeout=timeout)
+        except asyncio.TimeoutError:
+            raise TimeoutError(f"CDP command '{method}' timed out after {timeout}s")
+        resp = json.loads(raw)
+        return resp.get("result", resp)
+
+    async def _get_ws(self, tab_id: str = None):
+        """Get an open WebSocket connection to the active page tab."""
+        ws_url = await self.get_ws_url(tab_id)
+        ws = await websockets.connect(ws_url, max_size=10 * 1024 * 1024).__aenter__()
+        if not self._stealth_injected:
+            try:
+                await self._send_on_ws(ws, "Page.addScriptToEvaluateOnNewDocument",
+                                       {"source": STEALTH_JS})
+                self._stealth_injected = True
+            except Exception:
+                pass
+        return ws
 
     async def navigate(self, url: str, tab_id: str = None) -> dict:
         """Navigate — resets stealth flag so it gets re-injected."""
