@@ -329,24 +329,25 @@ class CDPBridge:
         pdf_b64 = result.get("data", "")
         return {"status": "ok", "pdf_base64": pdf_b64[:100] + "...", "size_bytes": len(base64.b64decode(pdf_b64))}
 
-    async def screenshot(self, format: str = "png") -> bytes:
+    async def screenshot(self, format: str = "png", tab_id: str = None) -> bytes:
         import base64
-        result = await self.send_command("Page.captureScreenshot", {"format": format})
+        result = await self.send_command("Page.captureScreenshot", {"format": format}, tab_id=tab_id)
         return base64.b64decode(result.get("data", ""))
 
-    async def get_cookies(self) -> list[dict]:
-        result = await self.send_command("Network.getAllCookies")
+    async def get_cookies(self, tab_id: str = None) -> list[dict]:
+        result = await self.send_command("Network.getAllCookies", tab_id=tab_id)
         return result.get("cookies", [])
 
-    async def set_cookie(self, name: str, value: str, domain: str, path: str = "/") -> dict:
+    async def set_cookie(self, name: str, value: str, domain: str, path: str = "/",
+                         tab_id: str = None) -> dict:
         return await self.send_command("Network.setCookie", {
             "name": name, "value": value, "domain": domain, "path": path,
-        })
+        }, tab_id=tab_id)
 
-    async def user_agent(self) -> str:
-        return await self.evaluate("navigator.userAgent")
+    async def user_agent(self, tab_id: str = None) -> str:
+        return await self.evaluate("navigator.userAgent", tab_id=tab_id)
 
-    async def is_undetected(self) -> dict:
+    async def is_undetected(self, tab_id: str = None) -> dict:
         """Check key anti-detection vectors."""
         checks = await self.evaluate("""
             JSON.stringify({

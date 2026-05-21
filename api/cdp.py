@@ -117,16 +117,16 @@ async def activate_tab(req: TabIdRequest):
 
 
 @router.get("/cdp/print-pdf")
-async def print_pdf():
+async def print_pdf(tab_id: Optional[str] = None):
     """Print the current page as PDF."""
-    result = await cdp.print_pdf()
+    result = await cdp.print_pdf(tab_id=tab_id)
     return result
 
 
 @router.post("/cdp/wait-for")
 async def wait_for_element(req: QueryRequest):
     """Wait for an element matching a CSS selector to appear."""
-    result = await cdp.wait_for_selector(req.selector, timeout=10000)
+    result = await cdp.wait_for_selector(req.selector, timeout=10000, tab_id=req.tab_id)
     return result
 
 
@@ -151,19 +151,19 @@ async def chrome_status():
 
 @router.post("/cdp/navigate")
 async def navigate(req: NavigateRequest):
-    result = await cdp.navigate(req.url)
+    result = await cdp.navigate(req.url, tab_id=req.tab_id)
     return {"status": "ok", "result": result}
 
 
 @router.get("/cdp/content")
 async def get_content(tab_id: Optional[str] = None):
-    text = await cdp.get_content()
+    text = await cdp.get_content(tab_id=tab_id)
     return {"content": text}
 
 
 @router.get("/cdp/dom")
 async def get_dom(tab_id: Optional[str] = None, depth: int = Query(3)):
-    dom = await cdp.get_dom(depth)
+    dom = await cdp.get_dom(depth, tab_id=tab_id)
     return {"dom": dom}
 
 
@@ -171,13 +171,13 @@ async def get_dom(tab_id: Optional[str] = None, depth: int = Query(3)):
 
 @router.post("/cdp/query")
 async def query_selector(req: QueryRequest):
-    node_id = await cdp.query_selector(req.selector)
+    node_id = await cdp.query_selector(req.selector, tab_id=req.tab_id)
     return {"nodeId": node_id}
 
 
 @router.post("/cdp/evaluate")
 async def evaluate(req: EvaluateRequest):
-    result = await cdp.evaluate(req.expression)
+    result = await cdp.evaluate(req.expression, tab_id=req.tab_id)
     return {"result": result}
 
 
@@ -186,21 +186,21 @@ async def evaluate(req: EvaluateRequest):
 @router.post("/cdp/click")
 async def click_element(req: ClickRequest):
     """Human-like click with random offset and timing."""
-    result = await cdp.click(req.selector)
+    result = await cdp.click(req.selector, tab_id=req.tab_id)
     return result
 
 
 @router.post("/cdp/type")
 async def type_text(req: TypeRequest):
     """Human-like typing with random delays between keystrokes."""
-    result = await cdp.type_text(req.selector, req.text)
+    result = await cdp.type_text(req.selector, req.text, tab_id=req.tab_id)
     return result
 
 
 @router.post("/cdp/scroll")
 async def scroll_page(req: ScrollRequest):
     """Human-like scroll."""
-    result = await cdp.scroll(req.x, req.y)
+    result = await cdp.scroll(req.x, req.y, tab_id=req.tab_id)
     return result
 
 
@@ -220,8 +220,8 @@ async def extract_data(req: ExtractRequest):
 # ─── Cookies ───
 
 @router.get("/cdp/cookies")
-async def get_cookies():
-    cookies = await cdp.get_cookies()
+async def get_cookies(tab_id: Optional[str] = None):
+    cookies = await cdp.get_cookies(tab_id=tab_id)
     return {"cookies": cookies}
 
 
