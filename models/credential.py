@@ -1,18 +1,20 @@
 from datetime import datetime, timezone
 
-from sqlalchemy import Column, Integer, String, DateTime, JSON
+from sqlalchemy import Column, Integer, String, DateTime, JSON, ForeignKey, UniqueConstraint
 
 from models.conversation import Base, utcnow
 
 
 class Credential(Base):
     __tablename__ = "credentials"
+    __table_args__ = (UniqueConstraint("name", "user_id", name="uq_credential_name_user"),)
 
     id = Column(Integer, primary_key=True, autoincrement=True)
-    name = Column(String(200), nullable=False, unique=True)
+    name = Column(String(200), nullable=False)
     site_url = Column(String(2000), nullable=False)
     username = Column(String(500), nullable=False)
     password = Column(String(500), nullable=False)
+    user_id = Column(Integer, ForeignKey("users.id", ondelete="CASCADE"), nullable=True)
     totp_secret = Column(String(500), nullable=True)
     selectors = Column(JSON, nullable=True)
     last_used = Column(DateTime(timezone=True), nullable=True)

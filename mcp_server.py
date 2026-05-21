@@ -22,22 +22,27 @@ logger = logging.getLogger("alphabetty-mcp")
 
 BASE = os.environ.get("ALPHABETTY_URL", "http://localhost:7700")
 TIMEOUT = httpx.Timeout(300.0, connect=10.0)
+API_KEY = os.environ.get("ALPHABETTY_API_KEY", "")
 
 mcp = FastMCP("alphabetty", instructions="Alphabetty AI research assistant — search, chat, browse, research, knowledge graph, and more.")
 
 
 # ─── Helpers ───
 
+def _headers():
+    return {"Authorization": f"Bearer {API_KEY}"} if API_KEY else {}
+
+
 async def _get(path: str, params: dict | None = None) -> dict:
     async with httpx.AsyncClient(timeout=TIMEOUT) as client:
-        r = await client.get(f"{BASE}{path}", params=params)
+        r = await client.get(f"{BASE}{path}", params=params, headers=_headers())
         r.raise_for_status()
         return r.json()
 
 
 async def _post(path: str, json_data: dict | None = None, files=None) -> dict:
     async with httpx.AsyncClient(timeout=TIMEOUT) as client:
-        r = await client.post(f"{BASE}{path}", json=json_data, files=files)
+        r = await client.post(f"{BASE}{path}", json=json_data, files=files, headers=_headers())
         r.raise_for_status()
         ct = r.headers.get("content-type", "")
         if "application/json" in ct:
@@ -48,14 +53,14 @@ async def _post(path: str, json_data: dict | None = None, files=None) -> dict:
 
 async def _patch(path: str, json_data: dict) -> dict:
     async with httpx.AsyncClient(timeout=TIMEOUT) as client:
-        r = await client.patch(f"{BASE}{path}", json=json_data)
+        r = await client.patch(f"{BASE}{path}", json=json_data, headers=_headers())
         r.raise_for_status()
         return r.json()
 
 
 async def _delete(path: str) -> dict:
     async with httpx.AsyncClient(timeout=TIMEOUT) as client:
-        r = await client.delete(f"{BASE}{path}")
+        r = await client.delete(f"{BASE}{path}", headers=_headers())
         r.raise_for_status()
         return r.json()
 
@@ -65,7 +70,7 @@ async def _sse_post(path: str, json_data: dict) -> str:
     tokens = []
     final_event = {}
     async with httpx.AsyncClient(timeout=TIMEOUT) as client:
-        async with client.stream("POST", f"{BASE}{path}", json=json_data) as resp:
+        async with client.stream("POST", f"{BASE}{path}", json=json_data, headers=_headers()) as resp:
             resp.raise_for_status()
             async for line in resp.aiter_lines():
                 if not line.startswith("data: "):
@@ -328,7 +333,7 @@ async def cdp_screenshot(format: str = "png", tab_id: str = "") -> str:
     if tab_id:
         params["tab_id"] = tab_id
     async with httpx.AsyncClient(timeout=TIMEOUT) as client:
-        r = await client.get(f"{BASE}/api/cdp/screenshot", params=params)
+        r = await client.get(f"{BASE}/api/cdp/screenshot", params=params, headers=_headers())
         r.raise_for_status()
         return base64.b64encode(r.content).decode()
 
@@ -541,7 +546,7 @@ async def upload_file(file_path: str, query: str | None = None) -> str:
             data = {}
             if query:
                 data["query"] = query
-            r = await client.post(f"{BASE}/api/files/upload", files=files, data=data)
+            r = await client.post(f"{BASE}/api/files/upload", files=files, data=data, headers=_headers())
             r.raise_for_status()
             return json.dumps(r.json())
 
@@ -659,7 +664,7 @@ async def export_markdown(conversation_id: int) -> str:
         conversation_id: The conversation to export
     """
     async with httpx.AsyncClient(timeout=TIMEOUT) as client:
-        r = await client.get(f"{BASE}/api/export/markdown/{conversation_id}")
+        r = await client.get(f"{BASE}/api/export/markdown/{conversation_id}", headers=_headers())
         r.raise_for_status()
         ct = r.headers.get("content-type", "")
         if "json" in ct:
@@ -675,7 +680,7 @@ async def export_pdf(conversation_id: int) -> str:
         conversation_id: The conversation to export
     """
     async with httpx.AsyncClient(timeout=TIMEOUT) as client:
-        r = await client.get(f"{BASE}/api/export/pdf/{conversation_id}")
+        r = await client.get(f"{BASE}/api/export/pdf/{conversation_id}", headers=_headers())
         r.raise_for_status()
         ct = r.headers.get("content-type", "")
         if "json" in ct:
@@ -779,7 +784,7 @@ async def _wait_for_server():
     for i in range(60):
         try:
             async with httpx.AsyncClient(timeout=httpx.Timeout(5.0)) as client:
-                r = await client.get(f"{BASE}/openapi.json")
+                r = await client.get(f"{BASE}/openapi.json", headers=_headers())
                 if r.status_code == 200:
                     logger.info("Alphabetty is ready")
                     return

@@ -6,13 +6,15 @@ from typing import Optional
 
 import httpx
 import websockets
-from fastapi import APIRouter, WebSocket, WebSocketDisconnect, Query
+from fastapi import APIRouter, WebSocket, WebSocketDisconnect, Query, Depends
 from pydantic import BaseModel
 
 from config import settings
+from core.auth import get_current_user
 from core.cdp_bridge import cdp
 from core.macro import recorder
 from core.recording import screen_recorder
+from models.user import User
 
 router = APIRouter(tags=["cdp"])
 logger = logging.getLogger(__name__)
@@ -91,47 +93,47 @@ class TabIdRequest(BaseModel):
 # ─── Tab management ───
 
 @router.get("/cdp/tabs")
-async def list_tabs():
+async def list_tabs(user: User = Depends(get_current_user)):
     return {"tabs": await cdp.get_tabs()}
 
 
 @router.post("/cdp/tab/new")
-async def create_tab(req: TabUrlRequest):
+async def create_tab(req: TabUrlRequest, user: User = Depends(get_current_user)):
     """Open a new Chrome tab and navigate to URL."""
     result = await cdp.create_tab(req.url)
     return result
 
 
 @router.post("/cdp/tab/close")
-async def close_tab(req: TabIdRequest):
+async def close_tab(req: TabIdRequest, user: User = Depends(get_current_user)):
     """Close a Chrome tab by target ID."""
     result = await cdp.close_tab(req.target_id)
     return result
 
 
 @router.post("/cdp/tab/activate")
-async def activate_tab(req: TabIdRequest):
+async def activate_tab(req: TabIdRequest, user: User = Depends(get_current_user)):
     """Activate (focus) a Chrome tab by target ID."""
     result = await cdp.activate_tab(req.target_id)
     return result
 
 
 @router.get("/cdp/print-pdf")
-async def print_pdf(tab_id: Optional[str] = None):
+async def print_pdf(tab_id: Optional[str] = None, user: User = Depends(get_current_user)):
     """Print the current page as PDF."""
     result = await cdp.print_pdf(tab_id=tab_id)
     return result
 
 
 @router.post("/cdp/wait-for")
-async def wait_for_element(req: QueryRequest):
+async def wait_for_element(req: QueryRequest, user: User = Depends(get_current_user)):
     """Wait for an element matching a CSS selector to appear."""
     result = await cdp.wait_for_selector(req.selector, timeout=10000, tab_id=req.tab_id)
     return result
 
 
 @router.get("/cdp/status")
-async def chrome_status():
+async def chrome_status(user: User = Depends(get_current_user)):
     """Check if Chrome is running and undetected."""
     try:
         tabs = await cdp.get_tabs()
@@ -150,19 +152,19 @@ async def chrome_status():
 # ─── Navigation ───
 
 @router.post("/cdp/navigate")
-async def navigate(req: NavigateRequest):
+async def navigate(req: NavigateRequest, user: User = Depends(get_current_user)):
     result = await cdp.navigate(req.url, tab_id=req.tab_id)
     return {"status": "ok", "result": result}
 
 
 @router.get("/cdp/content")
-async def get_content(tab_id: Optional[str] = None):
+async def get_content(tab_id: Optional[str] = None, user: User = Depends(get_current_user)):
     text = await cdp.get_content(tab_id=tab_id)
     return {"content": text}
 
 
 @router.get("/cdp/dom")
-async def get_dom(tab_id: Optional[str] = None, depth: int = Query(3)):
+async def get_dom(tab_id: Optional[str] = None, depth: int = Query(3), user: User = Depends(get_current_user)):
     dom = await cdp.get_dom(depth, tab_id=tab_id)
     return {"dom": dom}
 
@@ -170,13 +172,13 @@ async def get_dom(tab_id: Optional[str] = None, depth: int = Query(3)):
 # ─── DOM queries ───
 
 @router.post("/cdp/query")
-async def query_selector(req: QueryRequest):
+async def query_selector(req: QueryRequest, user: User = Depends(get_current_user)):
     node_id = await cdp.query_selector(req.selector, tab_id=req.tab_id)
     return {"nodeId": node_id}
 
 
 @router.post("/cdp/evaluate")
-async def evaluate(req: EvaluateRequest):
+async def evaluate(req: EvaluateRequest, user: User = Depends(get_current_user)):
     result = await cdp.evaluate(req.expression, tab_id=req.tab_id)
     return {"result": result}
 
@@ -184,35 +186,35 @@ async def evaluate(req: EvaluateRequest):
 # ─── Human-like interactions ───
 
 @router.post("/cdp/click")
-async def click_element(req: ClickRequest):
+async def click_element(req: ClickRequest, user: User = Depends(get_current_user)):
     """Human-like click with random offset and timing."""
     result = await cdp.click(req.selector, tab_id=req.tab_id)
     return result
 
 
 @router.post("/cdp/type")
-async def type_text(req: TypeRequest):
+async def type_text(req: TypeRequest, user: User = Depends(get_current_user)):
     """Human-like typing with random delays between keystrokes."""
     result = await cdp.type_text(req.selector, req.text, tab_id=req.tab_id)
     return result
 
 
 @router.post("/cdp/scroll")
-async def scroll_page(req: ScrollRequest):
+async def scroll_page(req: ScrollRequest, user: User = Depends(get_current_user)):
     """Human-like scroll."""
     result = await cdp.scroll(req.x, req.y, tab_id=req.tab_id)
     return result
 
 
 @router.get("/cdp/screenshot")
-async def screenshot(tab_id: Optional[str] = None, format: str = Query("png")):
+async def screenshot(tab_id: Optional[str] = None, format: str = Query("png"), user: User = Depends(get_current_user)):
     data = await cdp.screenshot(format)
     from fastapi.responses import Response
     return Response(content=data, media_type=f"image/{format}")
 
 
 @router.post("/cdp/extract")
-async def extract_data(req: ExtractRequest):
+async def extract_data(req: ExtractRequest, user: User = Depends(get_current_user)):
     data = await cdp.evaluate(req.expression)
     return {"data": data}
 
@@ -220,13 +222,13 @@ async def extract_data(req: ExtractRequest):
 # ─── Cookies ───
 
 @router.get("/cdp/cookies")
-async def get_cookies(tab_id: Optional[str] = None):
+async def get_cookies(tab_id: Optional[str] = None, user: User = Depends(get_current_user)):
     cookies = await cdp.get_cookies(tab_id=tab_id)
     return {"cookies": cookies}
 
 
 @router.post("/cdp/cookies")
-async def set_cookie(req: CookieRequest):
+async def set_cookie(req: CookieRequest, user: User = Depends(get_current_user)):
     result = await cdp.set_cookie(req.name, req.value, req.domain, req.path)
     return {"status": "ok", "result": result}
 
@@ -234,19 +236,19 @@ async def set_cookie(req: CookieRequest):
 # ─── Macro Recording (API-level) ───
 
 @router.post("/cdp/macro/record/start")
-async def macro_record_start(req: MacroNameRequest):
+async def macro_record_start(req: MacroNameRequest, user: User = Depends(get_current_user)):
     """Start API-level macro recording."""
     return recorder.start(req.name, req.url)
 
 
 @router.post("/cdp/macro/record/stop")
-async def macro_record_stop():
+async def macro_record_stop(user: User = Depends(get_current_user)):
     """Stop API-level recording and save macro."""
     return await recorder.stop()
 
 
 @router.get("/cdp/macro/record/status")
-async def macro_record_status():
+async def macro_record_status(user: User = Depends(get_current_user)):
     """Get current recording state."""
     return recorder.status()
 
@@ -254,13 +256,13 @@ async def macro_record_status():
 # ─── Macro Recording (Browser-level) ───
 
 @router.post("/cdp/macro/browser/start")
-async def macro_browser_start(req: MacroNameRequest):
+async def macro_browser_start(req: MacroNameRequest, user: User = Depends(get_current_user)):
     """Start browser-level recording by injecting JS event listeners."""
     return await recorder.start_browser(req.name, req.url)
 
 
 @router.post("/cdp/macro/browser/stop")
-async def macro_browser_stop():
+async def macro_browser_stop(user: User = Depends(get_current_user)):
     """Stop browser-level recording, poll events, save macro."""
     return await recorder.stop_browser()
 
@@ -268,19 +270,19 @@ async def macro_browser_stop():
 # ─── Macro Playback & CRUD ───
 
 @router.post("/cdp/macro/play")
-async def macro_play(req: MacroPlayRequest):
+async def macro_play(req: MacroPlayRequest, user: User = Depends(get_current_user)):
     """Replay a saved macro with timing."""
     return await recorder.play(req.macro_id)
 
 
 @router.get("/cdp/macro/list")
-async def macro_list():
+async def macro_list(user: User = Depends(get_current_user)):
     """List all saved macros."""
     return {"macros": await recorder.list_macros()}
 
 
 @router.get("/cdp/macro/{macro_id}")
-async def macro_get(macro_id: int):
+async def macro_get(macro_id: int, user: User = Depends(get_current_user)):
     """Get macro details."""
     macro = await recorder.get_macro(macro_id)
     if not macro:
@@ -290,7 +292,7 @@ async def macro_get(macro_id: int):
 
 
 @router.delete("/cdp/macro/{macro_id}")
-async def macro_delete(macro_id: int):
+async def macro_delete(macro_id: int, user: User = Depends(get_current_user)):
     """Delete a macro."""
     return await recorder.delete_macro(macro_id)
 
@@ -298,19 +300,19 @@ async def macro_delete(macro_id: int):
 # ─── Screen Recording ───
 
 @router.post("/cdp/screen/record/start")
-async def screen_record_start(req: ScreenRecordRequest):
+async def screen_record_start(req: ScreenRecordRequest, user: User = Depends(get_current_user)):
     """Start screen recording via CDP screencast."""
     return await screen_recorder.start(fps=req.fps, quality=req.quality)
 
 
 @router.post("/cdp/screen/record/stop")
-async def screen_record_stop():
+async def screen_record_stop(user: User = Depends(get_current_user)):
     """Stop screen recording and return compiled video."""
     return await screen_recorder.stop()
 
 
 @router.get("/cdp/screen/record/status")
-async def screen_record_status():
+async def screen_record_status(user: User = Depends(get_current_user)):
     """Get current screen recording state."""
     return screen_recorder.status()
 
@@ -318,7 +320,7 @@ async def screen_record_status():
 # ─── YouTube Automation ───
 
 @router.post("/cdp/youtube")
-async def youtube_play(req: YouTubeRequest):
+async def youtube_play(req: YouTubeRequest, user: User = Depends(get_current_user)):
     """Search YouTube and navigate to the first video result."""
     import httpx
     import json as _json
@@ -375,7 +377,7 @@ async def youtube_play(req: YouTubeRequest):
 # ─── Live Viewport Stream ───
 
 @router.get("/cdp/viewport/stream")
-async def viewport_stream(fps: int = Query(8), quality: int = Query(60)):
+async def viewport_stream(fps: int = Query(8), quality: int = Query(60), user: User = Depends(get_current_user)):
     """MJPEG live stream of Chrome's viewport."""
     from fastapi.responses import StreamingResponse
     from core.live_stream import mjpeg_frames
@@ -404,6 +406,34 @@ async def viewport_stream(fps: int = Query(8), quality: int = Query(60)):
 @router.websocket("/ws/cdp")
 async def cdp_websocket(ws: WebSocket):
     """WebSocket bridge for real-time CDP events (highlight on hover, etc.)."""
+    # Auth check before accepting
+    from core.auth import _validate_jwt, _validate_api_key, get_db
+    token = ws.cookies.get("access_token")
+    user = None
+    if token:
+        db_gen = get_db()
+        db = await anext(db_gen)
+        try:
+            user = await _validate_jwt(token, db)
+        finally:
+            await db_gen.aclose()
+    if not user:
+        # Try query param token (for non-browser clients)
+        qp_token = ws.query_params.get("token")
+        if qp_token:
+            db_gen = get_db()
+            db = await anext(db_gen)
+            try:
+                if qp_token.startswith("alph_"):
+                    user = await _validate_api_key(qp_token, db)
+                else:
+                    user = await _validate_jwt(qp_token, db)
+            finally:
+                await db_gen.aclose()
+    if not user:
+        await ws.close(code=4001, reason="Not authenticated")
+        return
+
     await ws.accept()
     try:
         ws_url = await cdp.get_ws_url()

@@ -1,6 +1,6 @@
 from datetime import datetime, timezone
 
-from sqlalchemy import Column, Integer, String, DateTime, JSON
+from sqlalchemy import Column, Integer, String, DateTime, JSON, ForeignKey
 
 from models.conversation import Base, utcnow
 
@@ -11,6 +11,7 @@ class Macro(Base):
     id = Column(Integer, primary_key=True, autoincrement=True)
     name = Column(String(500), nullable=False)
     url = Column(String(2000), default="")
+    user_id = Column(Integer, ForeignKey("users.id", ondelete="CASCADE"), nullable=True)
     steps = Column(JSON, default=list)
     step_count = Column(Integer, default=0)
     duration_ms = Column(Integer, default=0)

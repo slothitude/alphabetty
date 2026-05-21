@@ -1,11 +1,13 @@
 import logging
 from pathlib import Path
 
-from fastapi import APIRouter, UploadFile, File, Form
+from fastapi import APIRouter, UploadFile, File, Form, Depends
 from pydantic import BaseModel
 
 from config import settings
+from core.auth import get_current_user
 from core.llm import call_llm
+from models.user import User
 
 router = APIRouter(tags=["files"])
 logger = logging.getLogger(__name__)
@@ -42,7 +44,7 @@ async def extract_text_from_file(file_path: Path, filename: str) -> str:
 
 
 @router.post("/files/upload")
-async def upload_file(file: UploadFile = File(...), query: str = Form(None)):
+async def upload_file(file: UploadFile = File(...), query: str = Form(None), user: User = Depends(get_current_user)):
     """Upload a file and optionally analyze it."""
     upload_dir = Path(settings.upload_dir)
     upload_dir.mkdir(parents=True, exist_ok=True)
@@ -73,7 +75,7 @@ async def upload_file(file: UploadFile = File(...), query: str = Form(None)):
 
 
 @router.post("/files/analyze")
-async def analyze_file(filename: str, query: str):
+async def analyze_file(filename: str, query: str, user: User = Depends(get_current_user)):
     """Analyze a previously uploaded file."""
     file_path = Path(settings.upload_dir) / filename
     if not file_path.exists():

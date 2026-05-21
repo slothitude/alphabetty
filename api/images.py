@@ -1,10 +1,12 @@
 import logging
 
 import httpx
-from fastapi import APIRouter
+from fastapi import APIRouter, Depends
 from pydantic import BaseModel
 
 from config import settings
+from core.auth import get_current_user
+from models.user import User
 
 router = APIRouter(tags=["images"])
 logger = logging.getLogger(__name__)
@@ -19,7 +21,7 @@ class ImageRequest(BaseModel):
 
 
 @router.post("/images/generate")
-async def generate_image(req: ImageRequest):
+async def generate_image(req: ImageRequest, user: User = Depends(get_current_user)):
     """Generate an image via Smart Router → ComfyUI."""
     try:
         async with httpx.AsyncClient(timeout=httpx.Timeout(120.0)) as client:

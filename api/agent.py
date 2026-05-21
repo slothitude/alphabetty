@@ -20,11 +20,13 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app import async_session
+from core.auth import get_current_user
 from core.llm import AGENT_SYSTEM, call_llm, call_llm_with_tools
 from core.searxng import adaptive_search as searxng_search
 from core.content_extractor import fetch_and_extract
 from core.source_citer import format_sources
 from models.conversation import Conversation, Message
+from models.user import User
 
 router = APIRouter(tags=["agent"])
 logger = logging.getLogger(__name__)
@@ -415,7 +417,7 @@ def format_tool_result_for_llm(tool_result: dict) -> str:
 
 
 @router.post("/agent")
-async def agent_chat(req: AgentRequest):
+async def agent_chat(req: AgentRequest, user: User = Depends(get_current_user)):
     """Autonomous agent: LLM decides tools to call, executes them, loops until answer."""
 
     # Get or create conversation
@@ -425,7 +427,7 @@ async def agent_chat(req: AgentRequest):
             result = await db.execute(select(Conversation).where(Conversation.id == req.conversation_id))
             conv = result.scalar_one_or_none()
         if not conv:
-            conv = Conversation(title=f"Agent: {req.query[:80]}", mode=req.mode)
+            conv = Conversation(title=f"Agent: {req.query[:80]}", mode=req.mode, user_id=user.id)
             db.add(conv)
             await db.commit()
             await db.refresh(conv)

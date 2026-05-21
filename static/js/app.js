@@ -13,6 +13,9 @@ const app = {
     activeMode: 'agent',
 
     async init() {
+        // Auth check — redirect to login if not authenticated
+        const sessionOk = await auth.checkSession();
+        if (!sessionOk) return;
         this.loadConversations();
         this.setupTextarea();
         this.setupSlashCommands();

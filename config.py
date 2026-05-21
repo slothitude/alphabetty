@@ -26,6 +26,13 @@ class Settings(BaseSettings):
     port: int = 7700
     upload_dir: str = "/uploads"
 
+    # Auth
+    secret_key: str = "change-me-in-production"
+    jwt_expire_hours: int = 72
+    demo_enabled: bool = True
+    demo_username: str = "demo"
+    demo_password: str = "demo"
+
     # Agent bridge — comma-separated "name=url" pairs for outbound agent calling
     agent_endpoints: str = ""
 

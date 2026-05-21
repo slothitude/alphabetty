@@ -5,16 +5,12 @@ from pydantic import BaseModel
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app import async_session
+from core.auth import get_current_user, get_db
 from models.conversation import Conversation
 from models.space import Space
+from models.user import User
 
 router = APIRouter(tags=["spaces"])
-
-
-async def get_db():
-    async with async_session() as session:
-        yield session
 
 
 class SpaceCreate(BaseModel):
@@ -30,8 +26,8 @@ class SpaceUpdate(BaseModel):
 
 
 @router.post("/spaces")
-async def create_space(data: SpaceCreate, db: AsyncSession = Depends(get_db)):
-    space = Space(name=data.name, description=data.description, color=data.color)
+async def create_space(data: SpaceCreate, user: User = Depends(get_current_user), db: AsyncSession = Depends(get_db)):
+    space = Space(name=data.name, description=data.description, user_id=user.id, color=data.color)
     db.add(space)
     await db.commit()
     await db.refresh(space)
@@ -39,8 +35,11 @@ async def create_space(data: SpaceCreate, db: AsyncSession = Depends(get_db)):
 
 
 @router.get("/spaces")
-async def list_spaces(db: AsyncSession = Depends(get_db)):
-    result = await db.execute(select(Space).order_by(Space.created_at.desc()))
+async def list_spaces(user: User = Depends(get_current_user), db: AsyncSession = Depends(get_db)):
+    query = select(Space).order_by(Space.created_at.desc())
+    if user.role != "admin":
+        query = query.where(Space.user_id == user.id)
+    result = await db.execute(query)
     spaces = result.scalars().all()
     out = []
     for s in spaces:
@@ -56,7 +55,7 @@ async def list_spaces(db: AsyncSession = Depends(get_db)):
 
 
 @router.get("/spaces/{space_id}")
-async def get_space(space_id: int, db: AsyncSession = Depends(get_db)):
+async def get_space(space_id: int, user: User = Depends(get_current_user), db: AsyncSession = Depends(get_db)):
     result = await db.execute(select(Space).where(Space.id == space_id))
     space = result.scalar_one_or_none()
     if not space:
@@ -75,7 +74,7 @@ async def get_space(space_id: int, db: AsyncSession = Depends(get_db)):
 
 
 @router.patch("/spaces/{space_id}")
-async def update_space(space_id: int, data: SpaceUpdate, db: AsyncSession = Depends(get_db)):
+async def update_space(space_id: int, data: SpaceUpdate, user: User = Depends(get_current_user), db: AsyncSession = Depends(get_db)):
     result = await db.execute(select(Space).where(Space.id == space_id))
     space = result.scalar_one_or_none()
     if not space:
@@ -91,7 +90,7 @@ async def update_space(space_id: int, data: SpaceUpdate, db: AsyncSession = Depe
 
 
 @router.delete("/spaces/{space_id}")
-async def delete_space(space_id: int, db: AsyncSession = Depends(get_db)):
+async def delete_space(space_id: int, user: User = Depends(get_current_user), db: AsyncSession = Depends(get_db)):
     result = await db.execute(select(Space).where(Space.id == space_id))
     space = result.scalar_one_or_none()
     if space:
@@ -107,7 +106,7 @@ async def delete_space(space_id: int, db: AsyncSession = Depends(get_db)):
 
 
 @router.post("/spaces/{space_id}/add/{conv_id}")
-async def add_to_space(space_id: int, conv_id: int, db: AsyncSession = Depends(get_db)):
+async def add_to_space(space_id: int, conv_id: int, user: User = Depends(get_current_user), db: AsyncSession = Depends(get_db)):
     result = await db.execute(select(Conversation).where(Conversation.id == conv_id))
     conv = result.scalar_one_or_none()
     if conv:

@@ -12,8 +12,11 @@ import json
 import logging
 from typing import Any, Optional
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, Depends
 from pydantic import BaseModel
+
+from core.auth import get_current_user
+from models.user import User
 
 router = APIRouter(tags=["tools"])
 logger = logging.getLogger(__name__)
@@ -1424,13 +1427,13 @@ TOOL_HANDLERS = {
 # ─── Routes ───
 
 @router.get("/v1/tools")
-async def list_tools():
+async def list_tools(user: User = Depends(get_current_user)):
     """List all available tools in OpenAI function calling format."""
     return {"tools": TOOL_DEFINITIONS}
 
 
 @router.post("/v1/tools/call")
-async def call_tool(call: ToolCallRequest):
+async def call_tool(call: ToolCallRequest, user: User = Depends(get_current_user)):
     """Execute a tool by name with the given arguments."""
     handler = TOOL_HANDLERS.get(call.tool_name)
     if not handler:

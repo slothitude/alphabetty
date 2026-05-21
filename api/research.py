@@ -9,11 +9,13 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app import async_session
+from core.auth import get_current_user
 from core.llm import call_llm, _build_messages
 from core.searxng import search_multiple
 from core.content_extractor import fetch_and_extract
 from core.source_citer import format_sources
 from models.conversation import Conversation, Message
+from models.user import User
 
 router = APIRouter(tags=["research"])
 logger = logging.getLogger(__name__)
@@ -27,7 +29,7 @@ class ResearchRequest(BaseModel):
 
 
 @router.post("/research")
-async def deep_research(req: ResearchRequest):
+async def deep_research(req: ResearchRequest, user: User = Depends(get_current_user)):
     """Deep research: plan → search → extract → gap analysis → synthesize."""
     async def generate():
         try:
@@ -127,7 +129,7 @@ async def deep_research(req: ResearchRequest):
                 if req.conversation_id:
                     conv = await db.get(Conversation, req.conversation_id)
                 if not req.conversation_id or not conv:
-                    conv = Conversation(title=f"Research: {req.query[:80]}", mode=req.mode)
+                    conv = Conversation(title=f"Research: {req.query[:80]}", mode=req.mode, user_id=user.id)
                     db.add(conv)
                     await db.commit()
                     await db.refresh(conv)

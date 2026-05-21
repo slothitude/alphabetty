@@ -16,6 +16,7 @@ class Conversation(Base):
     id = Column(Integer, primary_key=True, autoincrement=True)
     title = Column(String(500), default="New Chat")
     space_id = Column(Integer, ForeignKey("spaces.id", ondelete="SET NULL"), nullable=True)
+    user_id = Column(Integer, ForeignKey("users.id", ondelete="CASCADE"), nullable=True)
     mode = Column(String(50), default="concise")  # concise, detailed, creative, academic, code
     created_at = Column(DateTime(timezone=True), default=utcnow)
     updated_at = Column(DateTime(timezone=True), default=utcnow, onupdate=utcnow)

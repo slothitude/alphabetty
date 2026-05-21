@@ -7,19 +7,15 @@ from fastapi.responses import Response, StreamingResponse
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app import async_session
+from core.auth import get_current_user, get_db
 from models.conversation import Conversation, Message
+from models.user import User
 
 router = APIRouter(tags=["export"])
 
 
-async def get_db():
-    async with async_session() as session:
-        yield session
-
-
 @router.get("/export/markdown/{conv_id}")
-async def export_markdown(conv_id: int, db: AsyncSession = Depends(get_db)):
+async def export_markdown(conv_id: int, user: User = Depends(get_current_user), db: AsyncSession = Depends(get_db)):
     result = await db.execute(select(Conversation).where(Conversation.id == conv_id))
     conv = result.scalar_one_or_none()
     if not conv:
@@ -59,7 +55,7 @@ async def export_markdown(conv_id: int, db: AsyncSession = Depends(get_db)):
 
 
 @router.get("/export/pdf/{conv_id}")
-async def export_pdf(conv_id: int, db: AsyncSession = Depends(get_db)):
+async def export_pdf(conv_id: int, user: User = Depends(get_current_user), db: AsyncSession = Depends(get_db)):
     result = await db.execute(select(Conversation).where(Conversation.id == conv_id))
     conv = result.scalar_one_or_none()
     if not conv:

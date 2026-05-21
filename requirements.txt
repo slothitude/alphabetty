@@ -23,3 +23,6 @@ fastmcp>=2.0
 yt-dlp>=2024.1
 # TOTP auto-generation for 2FA sign-in
 pyotp>=2.9
+# Auth: JWT tokens + password hashing
+PyJWT>=2.8.0
+bcrypt>=4.0.0

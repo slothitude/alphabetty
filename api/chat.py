@@ -2,24 +2,21 @@ import json
 import re
 from typing import Optional
 
-from fastapi import APIRouter, Depends, Query
+from fastapi import APIRouter, Depends, Query, HTTPException
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app import async_session
+from core.auth import get_current_user, get_db
 from core.llm import stream_llm, call_llm, _build_messages
 from core.searxng import adaptive_search
 from core.source_citer import format_sources
 from models.conversation import Conversation, Message
+from models.user import User
 
 router = APIRouter(tags=["chat"])
-
-
-async def get_db():
-    async with async_session() as session:
-        yield session
 
 
 class ChatRequest(BaseModel):
@@ -40,8 +37,8 @@ class ConversationUpdate(BaseModel):
 
 
 @router.post("/conversations")
-async def create_conversation(data: ConversationCreate, db: AsyncSession = Depends(get_db)):
-    conv = Conversation(title=data.title, mode=data.mode)
+async def create_conversation(data: ConversationCreate, user: User = Depends(get_current_user), db: AsyncSession = Depends(get_db)):
+    conv = Conversation(title=data.title, mode=data.mode, user_id=user.id)
     db.add(conv)
     await db.commit()
     await db.refresh(conv)
@@ -49,10 +46,11 @@ async def create_conversation(data: ConversationCreate, db: AsyncSession = Depen
 
 
 @router.get("/conversations")
-async def list_conversations(db: AsyncSession = Depends(get_db)):
-    result = await db.execute(
-        select(Conversation).order_by(Conversation.updated_at.desc())
-    )
+async def list_conversations(user: User = Depends(get_current_user), db: AsyncSession = Depends(get_db)):
+    query = select(Conversation).order_by(Conversation.updated_at.desc())
+    if user.role != "admin":
+        query = query.where(Conversation.user_id == user.id)
+    result = await db.execute(query)
     convs = result.scalars().all()
     out = []
     for c in convs:
@@ -88,13 +86,15 @@ async def list_conversations(db: AsyncSession = Depends(get_db)):
 
 
 @router.get("/conversations/{conv_id}")
-async def get_conversation(conv_id: int, db: AsyncSession = Depends(get_db)):
+async def get_conversation(conv_id: int, user: User = Depends(get_current_user), db: AsyncSession = Depends(get_db)):
     result = await db.execute(
         select(Conversation).where(Conversation.id == conv_id)
     )
     conv = result.scalar_one_or_none()
     if not conv:
-        return {"error": "Not found"}, 404
+        raise HTTPException(status_code=404, detail="Not found")
+    if user.role != "admin" and conv.user_id != user.id:
+        raise HTTPException(status_code=403, detail="Access denied")
 
     msgs_result = await db.execute(
         select(Message).where(Message.conversation_id == conv_id).order_by(Message.id)
@@ -129,11 +129,13 @@ async def _get_conv_tags(conv_id: int, db: AsyncSession):
 
 
 @router.patch("/conversations/{conv_id}")
-async def update_conversation(conv_id: int, data: ConversationUpdate, db: AsyncSession = Depends(get_db)):
+async def update_conversation(conv_id: int, data: ConversationUpdate, user: User = Depends(get_current_user), db: AsyncSession = Depends(get_db)):
     result = await db.execute(select(Conversation).where(Conversation.id == conv_id))
     conv = result.scalar_one_or_none()
     if not conv:
-        return {"error": "Not found"}
+        raise HTTPException(status_code=404, detail="Not found")
+    if user.role != "admin" and conv.user_id != user.id:
+        raise HTTPException(status_code=403, detail="Access denied")
     if data.title:
         conv.title = data.title
     if data.mode:
@@ -143,9 +145,11 @@ async def update_conversation(conv_id: int, data: ConversationUpdate, db: AsyncS
 
 
 @router.delete("/conversations/{conv_id}")
-async def delete_conversation(conv_id: int, db: AsyncSession = Depends(get_db)):
+async def delete_conversation(conv_id: int, user: User = Depends(get_current_user), db: AsyncSession = Depends(get_db)):
     result = await db.execute(select(Conversation).where(Conversation.id == conv_id))
     conv = result.scalar_one_or_none()
+    if conv and user.role != "admin" and conv.user_id != user.id:
+        raise HTTPException(status_code=403, detail="Access denied")
     if conv:
         await db.delete(conv)
         await db.commit()
@@ -153,19 +157,19 @@ async def delete_conversation(conv_id: int, db: AsyncSession = Depends(get_db)):
 
 
 @router.post("/chat")
-async def chat(req: ChatRequest, db: AsyncSession = Depends(get_db)):
+async def chat(req: ChatRequest, user: User = Depends(get_current_user), db: AsyncSession = Depends(get_db)):
     """Send a message and get an SSE-streamed AI response with optional search."""
     # Get or create conversation
     if req.conversation_id:
         result = await db.execute(select(Conversation).where(Conversation.id == req.conversation_id))
         conv = result.scalar_one_or_none()
         if not conv:
-            conv = Conversation(title="New Chat", mode=req.mode)
+            conv = Conversation(title="New Chat", mode=req.mode, user_id=user.id)
             db.add(conv)
             await db.commit()
             await db.refresh(conv)
     else:
-        conv = Conversation(title=req.query[:100], mode=req.mode)
+        conv = Conversation(title=req.query[:100], mode=req.mode, user_id=user.id)
         db.add(conv)
         await db.commit()
         await db.refresh(conv)
