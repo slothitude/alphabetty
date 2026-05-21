@@ -1,6 +1,6 @@
 # Alphabetty
 
-AI research assistant with web search, Chrome automation, deep research, and knowledge graph — all accessible via web UI, MCP tools, or REST API.
+AI research assistant with web search, Chrome automation, deep research, knowledge graph, and agent-to-agent connectivity — accessible via web UI, MCP tools, SSE event stream, or REST API.
 
 ## What It Does
 
@@ -11,8 +11,10 @@ Alphabetty is a self-hosted research platform that combines web search, AI chat,
 - **AI Chat** — Conversational AI with web search integration. Every response is backed by sources with domain authority scoring. Supports multiple writing modes (concise, detailed, creative, academic, code).
 - **Web Search** — SearXNG-powered search with adaptive query classification. Automatically categorizes queries (news, technical, academic) and optimizes search strategy.
 - **Deep Research** — Multi-round automated research pipeline: plans search queries, executes them, extracts content from sources, identifies gaps in coverage, runs follow-up searches, and synthesizes a comprehensive report.
-- **Agent Mode** — Autonomous AI agent that decides which tools to use (search, browse, click, extract, type), runs multiple rounds with planning and reflection, and produces a final answer.
-- **Chrome Automation** — Full headless Chrome control via CDP with anti-detection. Human-like clicking, typing, and scrolling. JavaScript evaluation, screenshots, DOM inspection, cookie management.
+- **Agent Mode** — Autonomous AI agent with 16 tools (search, browse, click, type, scroll, tabs, macros, YouTube, PDF, delegation). Runs multiple rounds with planning and reflection.
+- **Chrome Automation** — Full headless Chrome control via CDP with anti-detection. Tab management, human-like clicking/typing/scrolling, wait-for-element, PDF printing, JavaScript evaluation, screenshots, DOM inspection, cookie management.
+- **Macro Recording** — Record and replay browser interactions (API-level and browser-level) with timing-preserving playback. Screen recording via CDP screencast.
+- **Agent-to-Agent Connectivity** — SSE event bus for real-time notifications. Outbound agent bridge to delegate tasks to remote agents. External agents subscribe to events via `/api/events`.
 - **Knowledge Graph** — FTS5 full-text search across all conversations, messages, and entities. Automatic entity extraction and relationship mapping. Tagging system for organizing research.
 - **File Analysis** — Upload and analyze PDF, DOCX, text, and code files with AI-powered Q&A.
 - **Image Generation** — Generate images via ComfyUI/FLUX pipeline.
@@ -22,28 +24,34 @@ Alphabetty is a self-hosted research platform that combines web search, AI chat,
 ## Architecture
 
 ```
-┌─────────────┐     ┌──────────────────────────────────────────┐
-│   Browser    │────▸│  FastAPI (port 7700)                     │
-│   Web UI     │     │  ├── Chat / Search / Research / Agent    │
-│   (HTMX+JS)  │     │  ├── Chrome CDP (headless, port 9222)   │
-└─────────────┘     │  ├── Knowledge Graph (SQLite + FTS5)     │
-                    │  ├── File Analysis / Image Gen            │
-┌─────────────┐     │  └── Spaces / Export                      │
-│  MCP Server  │◂────┤                                          │
-│  (stdio)     │     │  REST Tools API                          │
-│  40 tools    │     │  GET  /api/v1/tools                      │
-└─────────────┘     │  POST /api/v1/tools/call                  │
-                    └──────────────────────────────────────────┘
-┌─────────────┐
-│  Claude Code │────▸  MCP (stdio) ──HTTP──▸ localhost:7700
-│  GPT / Other │────▸  REST API ───────────▸ localhost:7700
+┌─────────────┐     ┌──────────────────────────────────────────────┐
+│   Browser    │────▸│  FastAPI (port 7700)                         │
+│   Web UI     │     │  ├── Chat / Search / Research / Agent        │
+│   (HTMX+JS)  │     │  ├── Chrome CDP (headless, port 9222)       │
+└─────────────┘     │  ├── Knowledge Graph (SQLite + FTS5)         │
+                    │  ├── Macro Recording / Screen Recording       │
+┌─────────────┐     │  ├── SSE Event Bus (page.load, research.done)│
+│  MCP Server  │◂────┤  ├── Agent Bridge (outbound delegation)     │
+│  (stdio)     │     │  └── Spaces / Export                         │
+│  49 tools    │     │                                              │
+└─────────────┘     │  REST Tools API                               │
+                    │  GET  /api/v1/tools  (49 tool definitions)   │
+┌─────────────┐     │  POST /api/v1/tools/call                     │
+│  Claude Code │     │                                              │
+│  GPT / Other │────▸│  SSE Event Stream                            │
+└─────────────┘     │  GET  /api/events          (all events)      │
+                    │  GET  /api/events/{type}   (filtered)        │
+┌─────────────┐     └──────────────────────────────────────────────┘
+│  Remote Agent│
+│  (delegate)  │◂──── agent_bridge ──HTTP──▸ external MCP servers
 └─────────────┘
 ```
 
-**Two interfaces for external agents:**
+**Three interfaces for external agents:**
 
-1. **MCP Server** (`mcp_server.py`) — Stdio transport, HTTP proxy to running app. For Claude Code, Cursor, and any MCP-compatible client. 40 tools.
+1. **MCP Server** (`mcp_server.py`) — Stdio transport, HTTP proxy to running app. For Claude Code, Cursor, and any MCP-compatible client. 49 tools.
 2. **REST Tools API** (`/api/v1/tools`) — OpenAI-format tool definitions + dispatch endpoint. For any agent with function calling.
+3. **SSE Event Stream** (`/api/events`) — Real-time event notifications. External agents subscribe to page loads, research completion, macro finishes, etc.
 
 ## Quick Start
 
@@ -81,7 +89,7 @@ Add to `~/.claude/.mcp.json`:
 }
 ```
 
-Restart Claude Code — all 40 tools appear as `mcp__alphabetty__*`.
+Restart Claude Code — all 49 tools appear as `mcp__alphabetty__*`.
 
 ### REST API (any agent)
 
@@ -105,14 +113,27 @@ curl -X POST http://localhost:7700/api/v1/tools/call \
   -d '{"tool_name": "chat", "arguments": {"query": "Explain transformer architectures", "mode": "detailed"}}'
 ```
 
-## Tool Catalog (40 Tools)
+### SSE Event Stream (external agents)
+
+```bash
+# Subscribe to all events
+curl -N http://localhost:7700/api/events
+
+# Subscribe to specific event type
+curl -N http://localhost:7700/api/events/page.loaded
+curl -N http://localhost:7700/api/events/research.done
+```
+
+Event types: `page.loaded`, `research.done`, `macro.done`, `recording.done`, `youtube.playing`, `agent.done`, `tab.created`
+
+## Tool Catalog (49 Tools)
 
 ### Research & Search
 | Tool | Description |
 |------|-------------|
 | `search` | SearXNG web search with adaptive classification |
 | `deep_research` | Multi-round research: plan → search → extract → gap analysis → synthesize |
-| `agent_research` | Autonomous agent with browsing tools, planning, reflection |
+| `agent_research` | Autonomous agent with 16 browsing tools, planning, reflection |
 
 ### Chat
 | Tool | Description |
@@ -142,6 +163,23 @@ curl -X POST http://localhost:7700/api/v1/tools/call \
 | `cdp_get_cookies` | Get all cookies |
 | `cdp_set_cookie` | Set a cookie |
 
+### Macros & Recording
+| Tool | Description |
+|------|-------------|
+| `macro_record_start` | Start API-level macro recording |
+| `macro_record_stop` | Stop recording and save |
+| `macro_record_browser` | Start browser-level recording (JS event listeners) |
+| `macro_record_stop_browser` | Stop browser recording and save |
+| `macro_play` | Replay a saved macro with timing |
+| `macro_list` | List all saved macros |
+| `screen_record_start` | Start screen recording via CDP screencast |
+| `screen_record_stop` | Stop recording and compile video |
+
+### YouTube
+| Tool | Description |
+|------|-------------|
+| `youtube_play` | Search YouTube and play in Chrome |
+
 ### Knowledge Graph
 | Tool | Description |
 |------|-------------|
@@ -167,6 +205,29 @@ curl -X POST http://localhost:7700/api/v1/tools/call \
 | `export_markdown` | Export conversation as Markdown |
 | `export_pdf` | Export conversation as PDF |
 
+## Agent Tools (16 Internal Tools)
+
+The autonomous agent has access to these tools for multi-step research and automation:
+
+| Tool | Description |
+|------|-------------|
+| `search` | Web search via SearXNG |
+| `browse` | Navigate to URL and extract page text |
+| `extract` | Extract text from CSS selector |
+| `click` | Click an element |
+| `type_text` | Type into an input field |
+| `screenshot` | Capture current page state |
+| `youtube_play` | Search and play YouTube video |
+| `macro_record` | Start recording a macro |
+| `macro_stop` | Stop recording and save |
+| `macro_play` | Replay a saved macro |
+| `tab_list` | List open Chrome tabs |
+| `tab_new` | Open a new tab |
+| `scroll` | Scroll page up/down |
+| `wait_for` | Wait for element to appear |
+| `print_pdf` | Print page as PDF |
+| `delegate` | Delegate sub-task to another agent |
+
 ## Configuration
 
 All settings use `ALPHABETTY_` prefix environment variables:
@@ -183,6 +244,7 @@ All settings use `ALPHABETTY_` prefix environment variables:
 | `ALPHABETTY_DB_PATH` | `/data/alphabetty.db` | SQLite database path |
 | `ALPHABETTY_PORT` | `7700` | FastAPI port |
 | `ALPHABETTY_UPLOAD_DIR` | `/uploads` | File upload directory |
+| `ALPHABETTY_AGENT_ENDPOINTS` | — | Comma-separated `name=url` for outbound agent delegation |
 
 ## Project Structure
 
@@ -190,26 +252,31 @@ All settings use `ALPHABETTY_` prefix environment variables:
 alphabetty/
 ├── app.py              # FastAPI app factory, DB engine, router registration
 ├── config.py           # Pydantic settings (env vars with ALPHABETTY_ prefix)
-├── mcp_server.py       # MCP server (stdio, HTTP proxy, 40 tools)
+├── mcp_server.py       # MCP server (stdio, HTTP proxy, 49 tools)
 ├── requirements.txt
 ├── Dockerfile          # Multi-service: FastAPI + Chrome + Xvfb
 ├── docker-compose.yml
 ├── api/                # FastAPI routers
 │   ├── chat.py         #   Chat + conversation CRUD (SSE streaming)
 │   ├── search.py       #   SearXNG search
-│   ├── cdp.py          #   Chrome CDP control (14 endpoints + WebSocket)
+│   ├── cdp.py          #   Chrome CDP control, tabs, macros, recording, YouTube, viewport
 │   ├── research.py     #   Deep research pipeline
-│   ├── agent.py        #   Autonomous agent mode
+│   ├── agent.py        #   Autonomous agent (16 tools, planning, reflection)
+│   ├── events.py       #   SSE event stream endpoints
 │   ├── files.py        #   File upload & analysis
 │   ├── images.py       #   Image generation
 │   ├── spaces.py       #   Space management
 │   ├── export.py       #   Markdown & PDF export
 │   ├── graph.py        #   Knowledge graph + tags + FTS5
-│   └── tools.py        #   REST tools API (OpenAI format)
+│   └── tools.py        #   REST tools API (OpenAI format, 49 tools)
 ├── core/               # Business logic
-│   ├── llm.py          #   LLM streaming/calling, fallback, tool calling
+│   ├── llm.py          #   LLM streaming/calling, fallback, tool calling, AGENT_TOOLS
 │   ├── searxng.py      #   Search with query classification
-│   ├── cdp_bridge.py   #   Chrome DevTools Protocol client
+│   ├── cdp_bridge.py   #   Chrome DevTools Protocol client (navigate, click, tabs, wait, PDF)
+│   ├── events.py       #   SSE pub/sub event bus (emit/subscribe)
+│   ├── agent_bridge.py #   Outbound agent calling and delegation
+│   ├── macro.py        #   Macro record/playback (API + browser level)
+│   ├── recording.py    #   Screen recording via CDP screencast → WebM
 │   ├── research_engine.py  # Multi-round research orchestration
 │   ├── content_extractor.py # URL → clean text extraction
 │   ├── source_citer.py #   Domain authority + source ranking
@@ -219,8 +286,11 @@ alphabetty/
 ├── models/             # SQLAlchemy models
 │   ├── conversation.py #   Conversation, Message, Source
 │   ├── space.py        #   Space
+│   ├── macro.py        #   Macro (recorded browser interactions)
 │   └── graph.py        #   Tag, Entity, EntityEdge, MessageEntity, DomainGraph
 ├── static/             # Frontend (vanilla JS + HTMX + Tailwind)
+│   ├── css/app.css     #   Styles + toast notifications
+│   └── js/app.js       #   App core + SSE event stream + toasts
 ├── templates/          # Jinja2 partials for HTMX
 └── data/               # SQLite database storage
 ```
