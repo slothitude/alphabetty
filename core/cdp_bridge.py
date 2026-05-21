@@ -88,6 +88,7 @@ class CDPBridge:
         self.cdp_url = cdp_url or settings.cdp_url
         self._msg_id = 0
         self._stealth_injected = False
+        self._lock = asyncio.Lock()  # Serializes mutating Chrome ops
 
     def _next_id(self) -> int:
         self._msg_id += 1
@@ -141,8 +142,9 @@ class CDPBridge:
         """Navigate — resets stealth flag so it gets re-injected."""
         if _recorder and _recorder.recording:
             _recorder.record_step("navigate", {"url": url})
-        self._stealth_injected = False
-        result = await self.send_command("Page.navigate", {"url": url}, tab_id=tab_id)
+        async with self._lock:
+            self._stealth_injected = False
+            result = await self.send_command("Page.navigate", {"url": url}, tab_id=tab_id)
         from core.events import emit
         emit("page.loaded", {"url": url})
         return result
@@ -172,11 +174,12 @@ class CDPBridge:
     async def evaluate(self, expression: str, tab_id: str = None) -> Any:
         if _recorder and _recorder.recording:
             _recorder.record_step("evaluate", {"expression": expression})
-        result = await self.send_command(
-            "Runtime.evaluate",
-            {"expression": expression, "returnByValue": True},
-            tab_id=tab_id,
-        )
+        async with self._lock:
+            result = await self.send_command(
+                "Runtime.evaluate",
+                {"expression": expression, "returnByValue": True},
+                tab_id=tab_id,
+            )
         return result.get("result", {}).get("value")
 
     async def click(self, selector: str, tab_id: str = None) -> dict:
@@ -184,44 +187,45 @@ class CDPBridge:
         Falls back to JS click() for shadow DOM elements."""
         if _recorder and _recorder.recording:
             _recorder.record_step("click", {"selector": selector})
-        node_id = await self.query_selector(selector, tab_id=tab_id)
-        if not node_id:
-            # Fallback: try JS click for shadow DOM / dynamic elements
-            js_result = await self.evaluate(
-                f'(function(){{ const el = document.querySelector("{selector}"); if(el){{ el.click(); return "clicked"; }} return null; }})()',
-                tab_id=tab_id,
-            )
-            if js_result == "clicked":
-                return {"status": "clicked_js", "selector": selector}
-            return {"error": "Element not found"}
-        box = await self.send_command("DOM.getBoxModel", {"nodeId": node_id}, tab_id=tab_id)
-        content = box.get("model", {}).get("content", [])
-        if len(content) < 8:
-            return {"error": "Could not determine element position"}
+        async with self._lock:
+            node_id = await self.query_selector(selector, tab_id=tab_id)
+            if not node_id:
+                # Fallback: try JS click for shadow DOM / dynamic elements
+                js_result = await self.evaluate(
+                    f'(function(){{ const el = document.querySelector("{selector}"); if(el){{ el.click(); return "clicked"; }} return null; }})()',
+                    tab_id=tab_id,
+                )
+                if js_result == "clicked":
+                    return {"status": "clicked_js", "selector": selector}
+                return {"error": "Element not found"}
+            box = await self.send_command("DOM.getBoxModel", {"nodeId": node_id}, tab_id=tab_id)
+            content = box.get("model", {}).get("content", [])
+            if len(content) < 8:
+                return {"error": "Could not determine element position"}
 
-        # Calculate center with slight random offset (human-like)
-        cx = (content[0] + content[2] + content[4] + content[6]) / 4
-        cy = (content[1] + content[3] + content[5] + content[7]) / 4
-        x = cx + random.uniform(-3, 3)
-        y = cy + random.uniform(-3, 3)
+            # Calculate center with slight random offset (human-like)
+            cx = (content[0] + content[2] + content[4] + content[6]) / 4
+            cy = (content[1] + content[3] + content[5] + content[7]) / 4
+            x = cx + random.uniform(-3, 3)
+            y = cy + random.uniform(-3, 3)
 
-        # Human-like mouse movement — dispatch mouseMoved events toward target
-        await self.send_command("Input.dispatchMouseEvent", {
-            "type": "mouseMoved", "x": x, "y": y,
-        }, tab_id=tab_id)
-        # Tiny delay between move and click
-        await asyncio.sleep(random.uniform(0.02, 0.08))
+            # Human-like mouse movement — dispatch mouseMoved events toward target
+            await self.send_command("Input.dispatchMouseEvent", {
+                "type": "mouseMoved", "x": x, "y": y,
+            }, tab_id=tab_id)
+            # Tiny delay between move and click
+            await asyncio.sleep(random.uniform(0.02, 0.08))
 
-        # Click with realistic timing
-        await self.send_command("Input.dispatchMouseEvent", {
-            "type": "mousePressed", "x": x, "y": y,
-            "button": "left", "clickCount": 1,
-        }, tab_id=tab_id)
-        await asyncio.sleep(random.uniform(0.03, 0.12))
-        await self.send_command("Input.dispatchMouseEvent", {
-            "type": "mouseReleased", "x": x, "y": y,
-            "button": "left", "clickCount": 1,
-        }, tab_id=tab_id)
+            # Click with realistic timing
+            await self.send_command("Input.dispatchMouseEvent", {
+                "type": "mousePressed", "x": x, "y": y,
+                "button": "left", "clickCount": 1,
+            }, tab_id=tab_id)
+            await asyncio.sleep(random.uniform(0.03, 0.12))
+            await self.send_command("Input.dispatchMouseEvent", {
+                "type": "mouseReleased", "x": x, "y": y,
+                "button": "left", "clickCount": 1,
+            }, tab_id=tab_id)
 
         return {"status": "clicked", "x": round(x, 1), "y": round(y, 1)}
 
@@ -230,53 +234,54 @@ class CDPBridge:
         uses JS injection to avoid doubled characters from keyDown+char events."""
         if _recorder and _recorder.recording:
             _recorder.record_step("type", {"selector": selector, "text": text})
-        node_id = await self.query_selector(selector, tab_id=tab_id)
+        async with self._lock:
+            node_id = await self.query_selector(selector, tab_id=tab_id)
 
-        # Check if element needs JS injection (contenteditable, ProseMirror, or rich-textarea)
-        needs_js = await self.evaluate(
-            f'(function(){{'
-            f'const el = document.querySelector("{selector}");'
-            f'if(!el) return false;'
-            f'if(el.contentEditable === "true") return true;'
-            f'if(el.tagName?.includes("-")) return true;'  # custom element (rich-textarea etc.)
-            f'const inner = el.querySelector("[contenteditable=true], .ql-editor, .ProseMirror");'
-            f'return !!inner;'
-            f'}})()',
-            tab_id=tab_id,
-        )
-
-        if needs_js:
-            # Use JS injection for contenteditable/rich editors — avoids doubled chars
-            escaped = text.replace("\\", "\\\\").replace('"', '\\"')
-            await self.evaluate(
-                f'(function(){{ '
-                f'const el = document.querySelector("{selector}"); '
-                f'if(!el) return "not found"; '
-                f'const target = el.querySelector("[contenteditable=true], .ql-editor, .ProseMirror") || el; '
-                f'target.focus(); '
-                f'document.execCommand("insertText", false, "{escaped}"); '
-                f'target.dispatchEvent(new Event("input", {{bubbles: true}})); '
-                f'return "done"; '
+            # Check if element needs JS injection (contenteditable, ProseMirror, or rich-textarea)
+            needs_js = await self.evaluate(
+                f'(function(){{'
+                f'const el = document.querySelector("{selector}");'
+                f'if(!el) return false;'
+                f'if(el.contentEditable === "true") return true;'
+                f'if(el.tagName?.includes("-")) return true;'  # custom element (rich-textarea etc.)
+                f'const inner = el.querySelector("[contenteditable=true], .ql-editor, .ProseMirror");'
+                f'return !!inner;'
                 f'}})()',
                 tab_id=tab_id,
             )
-            return {"status": "typed", "text": text}
 
-        # Standard input/textarea — use CDP keystroke events
-        if node_id:
-            await self.send_command("DOM.focus", {"nodeId": node_id}, tab_id=tab_id)
+            if needs_js:
+                # Use JS injection for contenteditable/rich editors — avoids doubled chars
+                escaped = text.replace("\\", "\\\\").replace('"', '\\"')
+                await self.evaluate(
+                    f'(function(){{ '
+                    f'const el = document.querySelector("{selector}"); '
+                    f'if(!el) return "not found"; '
+                    f'const target = el.querySelector("[contenteditable=true], .ql-editor, .ProseMirror") || el; '
+                    f'target.focus(); '
+                    f'document.execCommand("insertText", false, "{escaped}"); '
+                    f'target.dispatchEvent(new Event("input", {{bubbles: true}})); '
+                    f'return "done"; '
+                    f'}})()',
+                    tab_id=tab_id,
+                )
+                return {"status": "typed", "text": text}
 
-        for char in text:
-            await self.send_command("Input.dispatchKeyEvent", {
-                "type": "keyDown", "text": char,
-            }, tab_id=tab_id)
-            await self.send_command("Input.dispatchKeyEvent", {
-                "type": "char", "text": char,
-            }, tab_id=tab_id)
-            await asyncio.sleep(random.uniform(0.03, 0.12))
-            await self.send_command("Input.dispatchKeyEvent", {
-                "type": "keyUp", "text": char,
-            }, tab_id=tab_id)
+            # Standard input/textarea — use CDP keystroke events
+            if node_id:
+                await self.send_command("DOM.focus", {"nodeId": node_id}, tab_id=tab_id)
+
+            for char in text:
+                await self.send_command("Input.dispatchKeyEvent", {
+                    "type": "keyDown", "text": char,
+                }, tab_id=tab_id)
+                await self.send_command("Input.dispatchKeyEvent", {
+                    "type": "char", "text": char,
+                }, tab_id=tab_id)
+                await asyncio.sleep(random.uniform(0.03, 0.12))
+                await self.send_command("Input.dispatchKeyEvent", {
+                    "type": "keyUp", "text": char,
+                }, tab_id=tab_id)
 
         return {"status": "typed", "text": text}
 
@@ -284,29 +289,33 @@ class CDPBridge:
         """Human-like scroll."""
         if _recorder and _recorder.recording:
             _recorder.record_step("scroll", {"x": x, "y": y})
-        await self.send_command("Input.dispatchMouseEvent", {
-            "type": "mouseWheel",
-            "x": 0, "y": 0,
-            "deltaX": x, "deltaY": y,
-        }, tab_id=tab_id)
+        async with self._lock:
+            await self.send_command("Input.dispatchMouseEvent", {
+                "type": "mouseWheel",
+                "x": 0, "y": 0,
+                "deltaX": x, "deltaY": y,
+            }, tab_id=tab_id)
         return {"status": "scrolled", "x": x, "y": y}
 
     # ─── Tab management ───
 
     async def create_tab(self, url: str = "about:blank") -> dict:
         """Open a new Chrome tab and optionally navigate to URL."""
-        result = await self.send_command("Target.createTarget", {"url": url})
+        async with self._lock:
+            result = await self.send_command("Target.createTarget", {"url": url})
         target_id = result.get("targetId")
         return {"status": "created", "targetId": target_id, "url": url}
 
     async def close_tab(self, target_id: str) -> dict:
         """Close a Chrome tab by target ID."""
-        await self.send_command("Target.closeTarget", {"targetId": target_id})
+        async with self._lock:
+            await self.send_command("Target.closeTarget", {"targetId": target_id})
         return {"status": "closed", "targetId": target_id}
 
     async def activate_tab(self, target_id: str) -> dict:
         """Activate (focus) a Chrome tab by target ID."""
-        await self.send_command("Target.activateTarget", {"targetId": target_id})
+        async with self._lock:
+            await self.send_command("Target.activateTarget", {"targetId": target_id})
         return {"status": "activated", "targetId": target_id}
 
     # ─── Wait / PDF ───
@@ -317,14 +326,15 @@ class CDPBridge:
         interval = 0.3
         elapsed = 0.0
         while elapsed < timeout / 1000.0:
-            node_id = await self.query_selector(selector, tab_id=tab_id)
-            if node_id:
-                return {"status": "found", "selector": selector, "waited_ms": int(elapsed * 1000)}
-            # Fallback: JS querySelector (works with shadow DOM / dynamic content)
-            js_found = await self.evaluate(
-                f'document.querySelector("{selector}") !== null',
-                tab_id=tab_id,
-            )
+            async with self._lock:
+                node_id = await self.query_selector(selector, tab_id=tab_id)
+                if node_id:
+                    return {"status": "found", "selector": selector, "waited_ms": int(elapsed * 1000)}
+                # Fallback: JS querySelector (works with shadow DOM / dynamic content)
+                js_found = await self.evaluate(
+                    f'document.querySelector("{selector}") !== null',
+                    tab_id=tab_id,
+                )
             if js_found:
                 return {"status": "found_js", "selector": selector, "waited_ms": int(elapsed * 1000)}
             await asyncio.sleep(interval)
@@ -334,11 +344,12 @@ class CDPBridge:
     async def print_pdf(self, tab_id: str = None) -> dict:
         """Print the current page as a PDF (base64-encoded)."""
         import base64
-        result = await self.send_command("Page.printToPDF", {
-            "printBackground": True,
-            "paperWidth": 8.5,
-            "paperHeight": 11,
-        }, tab_id=tab_id)
+        async with self._lock:
+            result = await self.send_command("Page.printToPDF", {
+                "printBackground": True,
+                "paperWidth": 8.5,
+                "paperHeight": 11,
+            }, tab_id=tab_id)
         pdf_b64 = result.get("data", "")
         return {"status": "ok", "pdf_base64": pdf_b64[:100] + "...", "size_bytes": len(base64.b64decode(pdf_b64))}
 
