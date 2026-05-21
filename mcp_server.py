@@ -218,104 +218,147 @@ async def cdp_tabs() -> str:
 
 
 @mcp.tool()
-async def cdp_navigate(url: str) -> str:
+async def cdp_navigate(url: str, tab_id: str = "") -> str:
     """Navigate Chrome to a URL.
 
     Args:
         url: The URL to navigate to
+        tab_id: Target tab ID (optional, defaults to first page tab)
     """
-    return json.dumps(await _post("/api/cdp/navigate", {"url": url}))
+    payload = {"url": url}
+    if tab_id:
+        payload["tab_id"] = tab_id
+    return json.dumps(await _post("/api/cdp/navigate", payload))
 
 
 @mcp.tool()
-async def cdp_get_content() -> str:
-    """Get the text content of the current page."""
-    return json.dumps(await _get("/api/cdp/content"))
+async def cdp_get_content(tab_id: str = "") -> str:
+    """Get the text content of the current page.
+
+    Args:
+        tab_id: Target tab ID (optional, defaults to first page tab)
+    """
+    params = {}
+    if tab_id:
+        params["tab_id"] = tab_id
+    return json.dumps(await _get("/api/cdp/content", params))
 
 
 @mcp.tool()
-async def cdp_get_dom(depth: int = 3) -> str:
+async def cdp_get_dom(depth: int = 3, tab_id: str = "") -> str:
     """Get the DOM structure of the current page.
 
     Args:
         depth: DOM tree depth to return (1-10)
+        tab_id: Target tab ID (optional, defaults to first page tab)
     """
-    return json.dumps(await _get("/api/cdp/dom", {"depth": depth}))
+    params = {"depth": depth}
+    if tab_id:
+        params["tab_id"] = tab_id
+    return json.dumps(await _get("/api/cdp/dom", params))
 
 
 @mcp.tool()
-async def cdp_evaluate(expression: str) -> str:
+async def cdp_evaluate(expression: str, tab_id: str = "") -> str:
     """Run JavaScript in the browser and return the result.
 
     Args:
         expression: JavaScript expression to evaluate
+        tab_id: Target tab ID (optional, defaults to first page tab)
     """
-    return json.dumps(await _post("/api/cdp/evaluate", {"expression": expression}))
+    payload = {"expression": expression}
+    if tab_id:
+        payload["tab_id"] = tab_id
+    return json.dumps(await _post("/api/cdp/evaluate", payload))
 
 
 @mcp.tool()
-async def cdp_click(selector: str) -> str:
+async def cdp_click(selector: str, tab_id: str = "") -> str:
     """Click an element on the page with human-like random offset and timing.
 
     Args:
         selector: CSS selector for the element to click
+        tab_id: Target tab ID (optional, defaults to first page tab)
     """
-    return json.dumps(await _post("/api/cdp/click", {"selector": selector}))
+    payload = {"selector": selector}
+    if tab_id:
+        payload["tab_id"] = tab_id
+    return json.dumps(await _post("/api/cdp/click", payload))
 
 
 @mcp.tool()
-async def cdp_type(selector: str, text: str) -> str:
+async def cdp_type(selector: str, text: str, tab_id: str = "") -> str:
     """Type text into an element with human-like random delays between keystrokes.
 
     Args:
         selector: CSS selector for the input element
         text: Text to type
+        tab_id: Target tab ID (optional, defaults to first page tab)
     """
-    return json.dumps(await _post("/api/cdp/type", {"selector": selector, "text": text}))
+    payload = {"selector": selector, "text": text}
+    if tab_id:
+        payload["tab_id"] = tab_id
+    return json.dumps(await _post("/api/cdp/type", payload))
 
 
 @mcp.tool()
-async def cdp_scroll(x: int = 0, y: int = 300) -> str:
+async def cdp_scroll(x: int = 0, y: int = 300, tab_id: str = "") -> str:
     """Scroll the page with human-like behavior.
 
     Args:
         x: Horizontal scroll pixels
         y: Vertical scroll pixels
+        tab_id: Target tab ID (optional, defaults to first page tab)
     """
-    return json.dumps(await _post("/api/cdp/scroll", {"x": x, "y": y}))
+    payload = {"x": x, "y": y}
+    if tab_id:
+        payload["tab_id"] = tab_id
+    return json.dumps(await _post("/api/cdp/scroll", payload))
 
 
 @mcp.tool()
-async def cdp_screenshot(format: str = "png") -> str:
+async def cdp_screenshot(format: str = "png", tab_id: str = "") -> str:
     """Take a screenshot of the current page. Returns base64-encoded image.
 
     Args:
         format: Image format - png or jpeg
+        tab_id: Target tab ID (optional, defaults to first page tab)
     """
+    params = {"format": format}
+    if tab_id:
+        params["tab_id"] = tab_id
     async with httpx.AsyncClient(timeout=TIMEOUT) as client:
-        r = await client.get(f"{BASE}/api/cdp/screenshot", params={"format": format})
+        r = await client.get(f"{BASE}/api/cdp/screenshot", params=params)
         r.raise_for_status()
         return base64.b64encode(r.content).decode()
 
 
 @mcp.tool()
-async def cdp_extract(expression: str) -> str:
+async def cdp_extract(expression: str, tab_id: str = "") -> str:
     """Extract data from the current page using a JavaScript expression.
 
     Args:
         expression: JavaScript expression that returns data to extract
+        tab_id: Target tab ID (optional, defaults to first page tab)
     """
-    return json.dumps(await _post("/api/cdp/extract", {"expression": expression}))
+    payload = {"expression": expression}
+    if tab_id:
+        payload["tab_id"] = tab_id
+    return json.dumps(await _post("/api/cdp/extract", payload))
 
 
 @mcp.tool()
-async def cdp_query(selector: str) -> str:
+async def cdp_query(selector: str, tab_id: str = "") -> str:
     """Query elements on the page using a CSS selector. Returns matching node IDs.
 
     Args:
         selector: CSS selector to query
+        tab_id: Target tab ID (optional, defaults to first page tab)
     """
-    return json.dumps(await _post("/api/cdp/query", {"selector": selector}))
+    payload = {"selector": selector}
+    if tab_id:
+        payload["tab_id"] = tab_id
+    return json.dumps(await _post("/api/cdp/query", payload))
 
 
 @mcp.tool()
