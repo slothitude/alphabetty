@@ -32,13 +32,23 @@ logger = logging.getLogger(__name__)
 MAX_TOOL_ROUNDS = 15
 REFLECT_EVERY_N = 5
 
-# Session-level active tab tracking — set by tab_new, used by all tools
-_active_tab_id: str | None = None
+# Per-session tab tracking — keyed by conversation ID so multiple agents don't collide
+_session_tabs: dict[int, str | None] = {}
 
 
-def _get_tab_id() -> str | None:
-    """Get the active tab ID for this agent session."""
-    return _active_tab_id
+class AgentSession:
+    """Per-request agent context — isolates tab state between concurrent agents."""
+
+    def __init__(self, conv_id: int):
+        self.conv_id = conv_id
+        self.active_tab_id: str | None = _session_tabs.get(conv_id)
+
+    def set_active_tab(self, tab_id: str):
+        self.active_tab_id = tab_id
+        _session_tabs[self.conv_id] = tab_id
+
+    def get_tab_id(self) -> str | None:
+        return self.active_tab_id
 
 
 class AgentRequest(BaseModel):
@@ -85,7 +95,7 @@ async def reflect_step(query: str, rounds_done: int, tool_log: list[dict]) -> st
 
 # ─── Tool executors ───
 
-async def execute_tool(name: str, args: dict) -> dict:
+async def execute_tool(name: str, args: dict, session: AgentSession | None = None) -> dict:
     """Execute a tool call and return the result."""
     try:
         if name == "search":
@@ -98,7 +108,7 @@ async def execute_tool(name: str, args: dict) -> dict:
             }
 
         elif name == "browse":
-            tid = _get_tab_id()
+            tid = session.get_tab_id() if session else None
             if tid:
                 # Use CDP to navigate and extract — handles JS-heavy pages
                 from core.cdp_bridge import cdp
@@ -125,26 +135,26 @@ async def execute_tool(name: str, args: dict) -> dict:
 
         elif name == "extract":
             from core.cdp_bridge import cdp
-            tid = _get_tab_id()
+            tid = session.get_tab_id() if session else None
             expr = f'document.querySelector("{args["selector"]}")?.innerText || "Element not found"'
             result = await cdp.evaluate(expr, tab_id=tid)
             return {"tool": "extract", "selector": args["selector"], "text": result or "Not found"}
 
         elif name == "click":
             from core.cdp_bridge import cdp
-            tid = _get_tab_id()
+            tid = session.get_tab_id() if session else None
             result = await cdp.click(args["selector"], tab_id=tid)
             return {"tool": "click", "selector": args["selector"], "result": result}
 
         elif name == "type_text":
             from core.cdp_bridge import cdp
-            tid = _get_tab_id()
+            tid = session.get_tab_id() if session else None
             result = await cdp.type_text(args["selector"], args["text"], tab_id=tid)
             return {"tool": "type_text", "selector": args["selector"], "result": result}
 
         elif name == "screenshot":
             from core.cdp_bridge import cdp
-            tid = _get_tab_id()
+            tid = session.get_tab_id() if session else None
             try:
                 content = await cdp.get_content(tab_id=tid)
                 return {"tool": "screenshot", "page_text_preview": (content or "")[:3000]}
@@ -215,17 +225,16 @@ async def execute_tool(name: str, args: dict) -> dict:
         elif name == "tab_new":
             from core.cdp_bridge import cdp
             result = await cdp.create_tab(args.get("url", "about:blank"))
-            # Set as active tab for subsequent tool calls
-            if result.get("targetId"):
-                global _active_tab_id
-                _active_tab_id = result["targetId"]
+            # Set as active tab for this session
+            if result.get("targetId") and session:
+                session.set_active_tab(result["targetId"])
             from core.events import emit
             emit("tab.created", result)
             return {"tool": "tab_new", **result}
 
         elif name == "scroll":
             from core.cdp_bridge import cdp
-            tid = _get_tab_id()
+            tid = session.get_tab_id() if session else None
             direction = args.get("direction", "down")
             amount = args.get("amount", 300)
             y = -amount if direction == "up" else amount
@@ -234,13 +243,13 @@ async def execute_tool(name: str, args: dict) -> dict:
 
         elif name == "wait_for":
             from core.cdp_bridge import cdp
-            tid = _get_tab_id()
+            tid = session.get_tab_id() if session else None
             result = await cdp.wait_for_selector(args["selector"], args.get("timeout", 10000), tab_id=tid)
             return {"tool": "wait_for", **result}
 
         elif name == "print_pdf":
             from core.cdp_bridge import cdp
-            tid = _get_tab_id()
+            tid = session.get_tab_id() if session else None
             result = await cdp.print_pdf(tab_id=tid)
             return {"tool": "print_pdf", **result}
 
@@ -396,6 +405,7 @@ async def agent_chat(req: AgentRequest):
     async def generate():
         all_sources = []
         tool_calls_log = []
+        agent_session = AgentSession(conv_id)
 
         try:
             # Planning step
@@ -446,7 +456,7 @@ async def agent_chat(req: AgentRequest):
 
                     yield f"data: {json.dumps({'type': 'tool_call', 'tool': tool_name, 'args': tool_args})}\n\n"
 
-                    tool_result = await execute_tool(tool_name, tool_args)
+                    tool_result = await execute_tool(tool_name, tool_args, session=agent_session)
                     tool_calls_log.append({"tool": tool_name, "args": tool_args, "result_preview": str(tool_result)[:200]})
 
                     if tool_name == "search" and "results" in tool_result:
