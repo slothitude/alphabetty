@@ -5,7 +5,7 @@ const signin = {
 
     async load(container) {
         this.container = container;
-        this.render();
+        await this.render();
     },
 
     async render() {
