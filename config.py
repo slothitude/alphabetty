@@ -32,6 +32,7 @@ class Settings(BaseSettings):
     demo_enabled: bool = True
     demo_username: str = "demo"
     demo_password: str = "demo"
+    bootstrap_token: str = "alphabetty-bootstrap-secret"
 
     # Agent bridge — comma-separated "name=url" pairs for outbound agent calling
     agent_endpoints: str = ""

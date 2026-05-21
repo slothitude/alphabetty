@@ -23,6 +23,9 @@ logger = logging.getLogger("alphabetty-mcp")
 BASE = os.environ.get("ALPHABETTY_URL", "http://localhost:7700")
 TIMEOUT = httpx.Timeout(300.0, connect=10.0)
 API_KEY = os.environ.get("ALPHABETTY_API_KEY", "")
+BOOTSTRAP_TOKEN = os.environ.get("ALPHABETTY_BOOTSTRAP_TOKEN", "")
+SESSION_NAME = os.environ.get("ALPHABETTY_SESSION_NAME", "")
+_leased_key: str | None = None  # set if we acquired a session
 
 mcp = FastMCP("alphabetty", instructions="Alphabetty AI research assistant — search, chat, browse, research, knowledge graph, and more.")
 
@@ -30,7 +33,8 @@ mcp = FastMCP("alphabetty", instructions="Alphabetty AI research assistant — s
 # ─── Helpers ───
 
 def _headers():
-    return {"Authorization": f"Bearer {API_KEY}"} if API_KEY else {}
+    key = API_KEY or _leased_key or ""
+    return {"Authorization": f"Bearer {key}"} if key else {}
 
 
 async def _get(path: str, params: dict | None = None) -> dict:
@@ -777,6 +781,43 @@ async def signin_save(name: str, url: str, username: str, password: str,
     return json.dumps(await _post("/api/signin/credentials", payload))
 
 
+# ─── Session Leasing ───
+
+async def _acquire_session():
+    """Acquire an ephemeral session via bootstrap token. Sets _leased_key."""
+    global _leased_key
+    if not BOOTSTRAP_TOKEN or API_KEY:
+        return  # static key or no bootstrap — skip
+    try:
+        async with httpx.AsyncClient(timeout=httpx.Timeout(10.0)) as client:
+            r = await client.post(
+                f"{BASE}/api/auth/session/acquire",
+                json={"name": SESSION_NAME},
+                headers={"X-Bootstrap-Token": BOOTSTRAP_TOKEN},
+            )
+            r.raise_for_status()
+            data = r.json()
+            _leased_key = data["api_key"]
+            logger.info(f"Acquired session: {data.get('username', '?')}")
+    except Exception as e:
+        logger.warning(f"Session acquire failed: {e}")
+
+
+async def _release_session():
+    """Release the leased session."""
+    if not _leased_key:
+        return
+    try:
+        async with httpx.AsyncClient(timeout=httpx.Timeout(10.0)) as client:
+            await client.post(
+                f"{BASE}/api/auth/session/release",
+                headers={"Authorization": f"Bearer {_leased_key}"},
+            )
+            logger.info("Released session")
+    except Exception as e:
+        logger.warning(f"Session release failed: {e}")
+
+
 # ─── Startup ───
 
 async def _wait_for_server():
@@ -795,4 +836,12 @@ async def _wait_for_server():
 
 
 if __name__ == "__main__":
-    mcp.run()
+    # Acquire session before running (if bootstrap token set)
+    if BOOTSTRAP_TOKEN and not API_KEY:
+        asyncio.run(_wait_for_server())
+        asyncio.run(_acquire_session())
+    try:
+        mcp.run()
+    finally:
+        if _leased_key:
+            asyncio.run(_release_session())

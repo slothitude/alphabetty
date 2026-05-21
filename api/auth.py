@@ -1,8 +1,9 @@
-"""Auth API — registration, login, logout, API keys, admin user management."""
+"""Auth API — registration, login, logout, API keys, admin user management, session leasing."""
 
+import secrets
 from datetime import datetime, timezone
 
-from fastapi import APIRouter, Depends, Response, HTTPException
+from fastapi import APIRouter, Depends, Response, HTTPException, Request
 from pydantic import BaseModel
 from sqlalchemy import select
 
@@ -203,3 +204,51 @@ async def admin_delete_user(user_id: int, admin: User = Depends(get_admin_user),
     await db.delete(user)
     await db.commit()
     return {"ok": True}
+
+
+# ─── Session Leasing (bootstrap token auth) ───
+
+class SessionAcquireRequest(BaseModel):
+    name: str = ""  # optional label like "rog-2" or "lappy-1"
+
+
+@router.post("/auth/session/acquire")
+async def acquire_session(req: Request, body: SessionAcquireRequest, db=Depends(get_db)):
+    """Create an ephemeral user + API key for a Claude Code instance.
+    Requires X-Bootstrap-Token header matching ALPHABETTY_BOOTSTRAP_TOKEN.
+    """
+    token = req.headers.get("x-bootstrap-token", "")
+    if not token or token != settings.bootstrap_token:
+        raise HTTPException(401, "Invalid bootstrap token")
+
+    name = body.name or secrets.token_hex(4)
+    username = f"session-{name}-{secrets.token_hex(3)}"
+
+    user = User(
+        username=username,
+        password_hash=hash_password(secrets.token_urlsafe(32)),
+        role="user",
+        is_active=True,
+    )
+    db.add(user)
+    await db.commit()
+    await db.refresh(user)
+
+    raw_key, api_key_obj = await create_api_key(user.id, f"session-{name}", db)
+    return {
+        "user_id": user.id,
+        "username": user.username,
+        "api_key": raw_key,
+    }
+
+
+@router.post("/auth/session/release")
+async def release_session(user: User = Depends(get_current_user), db=Depends(get_db)):
+    """Release own session — deletes the calling user and their API keys.
+    Only works for session-* users (ephemeral).
+    """
+    if not user.username.startswith("session-"):
+        raise HTTPException(400, "Not an ephemeral session")
+    await db.delete(user)
+    await db.commit()
+    return {"ok": True, "released": user.id}
