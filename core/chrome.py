@@ -22,6 +22,7 @@ logger = logging.getLogger(__name__)
 CDP_PORT = 9222
 PROFILE_DIR = os.environ.get("ALPHABETTY_CHROME_PROFILE", "/chrome-profile")
 WINDOW_SIZE = os.environ.get("ALPHABETTY_CHROME_WINDOW_SIZE", "1920,1080")
+LOW_RAM = os.environ.get("ALPHABETTY_LOW_RAM", "").lower() in ("1", "true", "yes")
 CDP_URL = f"http://localhost:{CDP_PORT}"
 
 # Stealth JS injected on every page load via CDP
@@ -140,9 +141,18 @@ def launch_chrome() -> subprocess.Popen:
         "--disable-gpu",
         "--disable-software-rasterizer",
         "--no-sandbox",
-        # Open blank page
-        "about:blank",
     ]
+
+    # Low-RAM mode: fewer processes, less memory
+    if LOW_RAM:
+        args.extend([
+            "--renderer-process-limit=1",
+            "--disable-features=site-per-process",
+            "--disable-background-timer-throttling",
+            "--js-flags=--max-old-space-size=256",
+        ])
+
+    args.append("about:blank")
 
     logger.info(f"Launching Chrome: {' '.join(args[:6])}...")
 
