@@ -1,5 +1,6 @@
 """Auth API — registration, login, logout, API keys, admin user management, session leasing."""
 
+import json
 import secrets
 from datetime import datetime, timezone
 
@@ -70,10 +71,19 @@ async def register(req: RegisterRequest, db=Depends(get_db)):
     await db.refresh(user)
 
     token = create_access_token(user)
-    return {
-        "user": user.to_dict(),
-        "token": token,
-    }
+    response = Response(
+        content=json.dumps({"user": user.to_dict(), "ok": True}),
+        media_type="application/json",
+        status_code=200,
+    )
+    response.set_cookie(
+        key="access_token",
+        value=token,
+        httponly=True,
+        max_age=settings.jwt_expire_hours * 3600,
+        samesite="lax",
+    )
+    return response
 
 
 @router.post("/auth/login")
