@@ -226,25 +226,38 @@ class CDPBridge:
         return {"status": "clicked", "x": round(x, 1), "y": round(y, 1)}
 
     async def type_text(self, selector: str, text: str, tab_id: str = None) -> dict:
-        """Type text into an element. For contenteditable/ProseMirror, uses JS injection
-        to avoid doubled characters from keyDown+char events."""
+        """Type text into an element. For contenteditable/ProseMirror/rich-textarea,
+        uses JS injection to avoid doubled characters from keyDown+char events."""
         if _recorder and _recorder.recording:
             _recorder.record_step("type", {"selector": selector, "text": text})
         node_id = await self.query_selector(selector, tab_id=tab_id)
 
-        # Check if element is contenteditable (ProseMirror etc.)
-        is_contenteditable = await self.evaluate(
-            f'(document.querySelector("{selector}")?.contentEditable === "true") || false',
+        # Check if element needs JS injection (contenteditable, ProseMirror, or rich-textarea)
+        needs_js = await self.evaluate(
+            f'(function(){{'
+            f'const el = document.querySelector("{selector}");'
+            f'if(!el) return false;'
+            f'if(el.contentEditable === "true") return true;'
+            f'if(el.tagName?.includes("-")) return true;'  # custom element (rich-textarea etc.)
+            f'const inner = el.querySelector("[contenteditable=true], .ql-editor, .ProseMirror");'
+            f'return !!inner;'
+            f'}})()',
             tab_id=tab_id,
         )
 
-        if is_contenteditable:
-            # Use JS injection for contenteditable — avoids doubled chars
+        if needs_js:
+            # Use JS injection for contenteditable/rich editors — avoids doubled chars
             escaped = text.replace("\\", "\\\\").replace('"', '\\"')
             await self.evaluate(
-                f'(function(){{ const el = document.querySelector("{selector}"); if(!el) return "not found"; el.focus(); '
+                f'(function(){{ '
+                f'const el = document.querySelector("{selector}"); '
+                f'if(!el) return "not found"; '
+                f'const target = el.querySelector("[contenteditable=true], .ql-editor, .ProseMirror") || el; '
+                f'target.focus(); '
                 f'document.execCommand("insertText", false, "{escaped}"); '
-                f'el.dispatchEvent(new Event("input", {{bubbles: true}})); return "done"; }})()',
+                f'target.dispatchEvent(new Event("input", {{bubbles: true}})); '
+                f'return "done"; '
+                f'}})()',
                 tab_id=tab_id,
             )
             return {"status": "typed", "text": text}
