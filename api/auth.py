@@ -8,6 +8,12 @@ from fastapi import APIRouter, Depends, Response, HTTPException, Request
 from pydantic import BaseModel
 from sqlalchemy import select
 
+from config import settings as _cfg
+
+# Cookie secure flag — True when accessed over HTTPS
+def _cookie_secure(request: Request) -> bool:
+    return request.url.scheme == "https"
+
 from core.auth import (
     hash_password, verify_password, create_access_token,
     create_api_key, get_current_user, get_admin_user, get_optional_user, get_db,
@@ -43,7 +49,7 @@ class AdminUserUpdate(BaseModel):
 # ─── Auth endpoints ───
 
 @router.post("/auth/register")
-async def register(req: RegisterRequest, db=Depends(get_db)):
+async def register(request: Request, req: RegisterRequest, db=Depends(get_db)):
     """Create a new account."""
     if len(req.username) < 2:
         raise HTTPException(400, "Username too short")
@@ -82,12 +88,13 @@ async def register(req: RegisterRequest, db=Depends(get_db)):
         httponly=True,
         max_age=settings.jwt_expire_hours * 3600,
         samesite="lax",
+        secure=_cookie_secure(request),
     )
     return response
 
 
 @router.post("/auth/login")
-async def login(req: LoginRequest, db=Depends(get_db)):
+async def login(request: Request, req: LoginRequest, db=Depends(get_db)):
     """Login and set JWT cookie."""
     result = await db.execute(select(User).where(User.username == req.username))
     user = result.scalar_one_or_none()
@@ -113,6 +120,7 @@ async def login(req: LoginRequest, db=Depends(get_db)):
         httponly=True,
         max_age=settings.jwt_expire_hours * 3600,
         samesite="lax",
+        secure=_cookie_secure(request),
     )
     return response
 
