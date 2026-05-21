@@ -154,6 +154,18 @@ const app = {
             case 'tab.created':
                 this.appendTraceLog({ type: 'tab', message: `New tab: ${data.url || 'blank'}` });
                 break;
+            case 'signin.started':
+                this.showToast(`Signing in to ${data.url || 'site'}...`, 'info');
+                break;
+            case 'signin.2fa_required':
+                this.showToast(`2FA required — hint: ${data.hint || 'check your device'}`, 'error');
+                break;
+            case 'signin.done':
+                this.showToast(`Signed in successfully (${data.method || 'password'})`, 'success');
+                break;
+            case 'signin.failed':
+                this.showToast(`Sign-in failed: ${data.reason || data.error || 'unknown'}`, 'error');
+                break;
         }
     },
 
@@ -426,6 +438,7 @@ const app = {
             { cmd: '/mode academic', desc: 'Switch to academic mode', icon: '&#127891;' },
             { cmd: '/mode code', desc: 'Switch to code mode', icon: '&#128187;' },
             { cmd: '/research', desc: 'Run deep research on a query', icon: '&#128300;', hasArg: true },
+            { cmd: '/signin', desc: 'Open sign-in panel', icon: '&#128274;' },
         ];
         this.selectedAutocompleteIdx = -1;
     },
@@ -517,6 +530,7 @@ const app = {
             case '/search': return this.slashSearch(arg);
             case '/agent': return this.slashAgent(arg);
             case '/research': return this.slashResearch(arg);
+            case '/signin': return this.slashSignin();
             case '/mode': return this.slashMode(arg);
             default: return text;
         }
@@ -584,6 +598,10 @@ const app = {
         const surface = document.getElementById('surface');
         surface.appendChild(this.createAssistantBubble(`Mode switched to **${mode}**.`));
         this.scrollToBottom();
+    },
+
+    slashSignin() {
+        this.switchTab('signin');
     },
 
     // ─── Conversations ───
@@ -1139,6 +1157,8 @@ const app = {
         const list = document.getElementById('nav-list');
         if (tab === 'spaces') {
             spaces.load(list);
+        } else if (tab === 'signin') {
+            signin.load(list);
         } else {
             this.renderThreadList();
         }

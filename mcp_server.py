@@ -683,6 +683,95 @@ async def export_pdf(conversation_id: int) -> str:
         return base64.b64encode(r.content).decode()
 
 
+# ─── Sign-In ───
+
+@mcp.tool()
+async def signin_start(url: str, username: str, password: str, tab_id: str = "") -> str:
+    """Start a sign-in flow for a website. Navigates to URL, detects login form, fills credentials, submits. Returns state (waiting_2fa, signed_in, or failed).
+
+    Args:
+        url: Login page URL
+        username: Email or username
+        password: Password
+        tab_id: Target tab ID (optional, defaults to first page tab)
+    """
+    payload = {"url": url, "username": username, "password": password}
+    if tab_id:
+        payload["tab_id"] = tab_id
+    return json.dumps(await _post("/api/signin/start", payload))
+
+
+@mcp.tool()
+async def signin_submit_2fa(code: str, tab_id: str = "") -> str:
+    """Submit a 2FA/verification code during a sign-in flow. Use after signin_start returns waiting_2fa.
+
+    Args:
+        code: The 2FA verification code
+        tab_id: Target tab ID (optional, defaults to first page tab)
+    """
+    payload = {"code": code}
+    if tab_id:
+        payload["tab_id"] = tab_id
+    return json.dumps(await _post("/api/signin/2fa", payload))
+
+
+@mcp.tool()
+async def signin_check_2fa(tab_id: str = "") -> str:
+    """Check if the current page is asking for 2FA/verification code.
+
+    Args:
+        tab_id: Target tab ID (optional, defaults to first page tab)
+    """
+    params = {}
+    if tab_id:
+        params["tab_id"] = tab_id
+    return json.dumps(await _get("/api/signin/check-2fa", params))
+
+
+@mcp.tool()
+async def signin_status() -> str:
+    """Get the current sign-in workflow state (idle, signing_in, waiting_2fa, signed_in, failed)."""
+    return json.dumps(await _get("/api/signin/status"))
+
+
+@mcp.tool()
+async def signin_auto(name: str, tab_id: str = "") -> str:
+    """Automatically sign in using a saved credential profile. Handles TOTP auto-generation if configured.
+
+    Args:
+        name: Name of the saved credential profile (e.g. 'google', 'github')
+        tab_id: Target tab ID (optional, defaults to first page tab)
+    """
+    url = f"/api/signin/auto/{name}"
+    if tab_id:
+        url += f"?tab_id={tab_id}"
+    return json.dumps(await _post(url))
+
+
+@mcp.tool()
+async def signin_save(name: str, url: str, username: str, password: str,
+                      totp_secret: str = "", selectors: str = "") -> str:
+    """Save a credential profile for auto sign-in. Stores site URL, username, password, and optional TOTP secret.
+
+    Args:
+        name: Profile name (e.g. 'google', 'github')
+        url: Login page URL
+        username: Email or username
+        password: Password
+        totp_secret: Optional TOTP secret for auto 2FA
+        selectors: Optional JSON string with custom CSS selectors {"username": "...", "password": "...", "submit": "..."}
+    """
+    payload = {"name": name, "url": url, "username": username, "password": password}
+    if totp_secret:
+        payload["totp_secret"] = totp_secret
+    if selectors:
+        try:
+            payload["selectors"] = json.loads(selectors)
+        except json.JSONDecodeError:
+            pass
+    return json.dumps(await _post("/api/signin/credentials", payload))
+
+
 # ─── Startup ───
 
 async def _wait_for_server():

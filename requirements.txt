@@ -21,3 +21,5 @@ opencv-python-headless>=4.10.0
 fastmcp>=2.0
 # YouTube search/play (more reliable than DOM scraping)
 yt-dlp>=2024.1
+# TOTP auto-generation for 2FA sign-in
+pyotp>=2.9

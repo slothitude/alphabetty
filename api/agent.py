@@ -74,6 +74,9 @@ async def plan_step(query: str) -> str:
 - youtube_play(query) — play YouTube videos
 - print_pdf() — print page as PDF
 - delegate(task, agent) — delegate sub-tasks to other agents
+- signin_start(url, username, password) — start sign-in flow for a website
+- signin_2fa(code) — submit 2FA code
+- signin_auto(name) — auto sign-in using saved credential
 
 Given a user query, briefly state which tools to use and in what order. 1-2 sentences max."""},
         {"role": "user", "content": f"Plan approach for: {query}"},
@@ -258,6 +261,29 @@ async def execute_tool(name: str, args: dict, session: AgentSession | None = Non
             result = await delegate(args["task"], args.get("agent"))
             return {"tool": "delegate", **result}
 
+        elif name == "signin_start":
+            from core.signin import workflow
+            tid = session.get_tab_id() if session else None
+            result = await workflow.start(
+                url=args["url"],
+                username=args["username"],
+                password=args["password"],
+                tab_id=tid,
+            )
+            return {"tool": "signin_start", **result}
+
+        elif name == "signin_2fa":
+            from core.signin import workflow
+            tid = session.get_tab_id() if session else None
+            result = await workflow.submit_2fa(args["code"], tab_id=tid)
+            return {"tool": "signin_2fa", **result}
+
+        elif name == "signin_auto":
+            from core.signin import workflow
+            tid = session.get_tab_id() if session else None
+            result = await workflow.auto_signin(args["name"], tab_id=tid)
+            return {"tool": "signin_auto", **result}
+
         else:
             return {"error": f"Unknown tool: {name}"}
 
@@ -355,6 +381,35 @@ def format_tool_result_for_llm(tool_result: dict) -> str:
         if tool_result.get("error"):
             return f"Delegation failed: {tool_result['error']}"
         return f"Delegated to {tool_result.get('agent', 'unknown')}:\n{tool_result.get('result', '')[:3000]}"
+
+    elif tool == "signin_start":
+        state = tool_result.get("state", "unknown")
+        if tool_result.get("error"):
+            return f"Sign-in failed: {tool_result['error']}"
+        if state == "waiting_2fa":
+            hint = tool_result.get("hint", "")
+            return f"Sign-in requires 2FA. Hint: {hint}. Use signin_2fa(code) to submit the code."
+        if state == "signed_in":
+            return f"Successfully signed in to {tool_result.get('site', 'site')}"
+        return f"Sign-in state: {state}"
+
+    elif tool == "signin_2fa":
+        if tool_result.get("error"):
+            return f"2FA submission failed: {tool_result['error']}"
+        if tool_result.get("state") == "signed_in":
+            return "2FA accepted — successfully signed in"
+        return f"2FA result: {tool_result.get('state', 'unknown')}"
+
+    elif tool == "signin_auto":
+        if tool_result.get("error"):
+            return f"Auto sign-in failed: {tool_result['error']}"
+        if tool_result.get("totp_auto"):
+            return "Auto sign-in with TOTP — successfully signed in"
+        if tool_result.get("state") == "signed_in":
+            return "Auto sign-in successful"
+        if tool_result.get("state") == "waiting_2fa":
+            return "Auto sign-in requires manual 2FA — use signin_2fa(code)"
+        return f"Auto sign-in state: {tool_result.get('state', 'unknown')}"
 
     return json.dumps(tool_result)
 

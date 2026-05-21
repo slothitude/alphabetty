@@ -24,6 +24,10 @@ EVENT_TYPES = {
     "tab.created",
     "tab.closed",
     "tool.called",
+    "signin.started",
+    "signin.2fa_required",
+    "signin.done",
+    "signin.failed",
 }
 
 # ─── Subscribers ───

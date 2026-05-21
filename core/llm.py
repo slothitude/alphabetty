@@ -317,6 +317,50 @@ AGENT_TOOLS = [
             },
         },
     },
+    {
+        "type": "function",
+        "function": {
+            "name": "signin_start",
+            "description": "Start a sign-in flow for a website. Navigates to the URL, detects the login form, fills credentials, and submits. Returns the state (waiting_2fa, signed_in, or failed).",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "url": {"type": "string", "description": "Login page URL"},
+                    "username": {"type": "string", "description": "Email or username"},
+                    "password": {"type": "string", "description": "Password"},
+                },
+                "required": ["url", "username", "password"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "signin_2fa",
+            "description": "Submit a 2FA/verification code during a sign-in flow. Use after signin_start returns waiting_2fa.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "code": {"type": "string", "description": "The 2FA verification code"},
+                },
+                "required": ["code"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "signin_auto",
+            "description": "Automatically sign in using a saved credential profile. Handles TOTP if configured. Returns signed_in or waiting_2fa.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "name": {"type": "string", "description": "Name of the saved credential profile (e.g. 'google', 'github')"},
+                },
+                "required": ["name"],
+            },
+        },
+    },
 ]
 
 AGENT_SYSTEM = """You are Alphabetty, an autonomous AI research agent with full web browsing and automation capabilities.
@@ -350,6 +394,11 @@ AGENT_SYSTEM = """You are Alphabetty, an autonomous AI research agent with full 
 
 ### Delegation
 - **delegate(task, agent)** — Delegate a sub-task to another agent
+
+### Sign-In
+- **signin_start(url, username, password)** — Start sign-in flow for a website
+- **signin_2fa(code)** — Submit 2FA code when prompted
+- **signin_auto(name)** — Auto sign-in using saved credential profile
 
 ## Agent Strategy
 1. Start by searching for the user's query

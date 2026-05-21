@@ -9,6 +9,7 @@ from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine, async_sess
 from config import settings
 from models.conversation import Base
 import models.macro  # noqa: F401 — ensure table creation
+import models.credential  # noqa: F401 — ensure table creation
 
 engine = create_async_engine(f"sqlite+aiosqlite:///{settings.db_path}", echo=False)
 async_session = async_sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
@@ -45,6 +46,7 @@ from api.agent import router as agent_router
 from api.graph import router as graph_router
 from api.tools import router as tools_router
 from api.events import router as events_router
+from api.signin import router as signin_router
 
 app.include_router(chat_router, prefix="/api")
 app.include_router(search_router, prefix="/api")
@@ -58,6 +60,7 @@ app.include_router(agent_router, prefix="/api")
 app.include_router(graph_router, prefix="/api")
 app.include_router(tools_router, prefix="/api")
 app.include_router(events_router, prefix="/api")
+app.include_router(signin_router, prefix="/api")
 
 
 @app.get("/")
