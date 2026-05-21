@@ -10,9 +10,11 @@ from sqlalchemy import select
 
 from config import settings as _cfg
 
-# Cookie secure flag — True when accessed over HTTPS
+# Cookie secure flag — True when accessed over HTTPS (direct or via reverse proxy)
 def _cookie_secure(request: Request) -> bool:
-    return request.url.scheme == "https"
+    if request.url.scheme == "https":
+        return True
+    return request.headers.get("x-forwarded-proto", "") == "https"
 
 from core.auth import (
     hash_password, verify_password, create_access_token,
