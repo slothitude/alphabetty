@@ -1,0 +1,10 @@
+<!-- Message partial for HTMX -->
+<div class="message message-{{ role }}">
+    <div class="message-bubble">
+        {% if role == 'user' %}
+            {{ content }}
+        {% else %}
+            {{ content | safe }}
+        {% endif %}
+    </div>
+</div>

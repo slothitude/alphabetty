@@ -1,0 +1,7 @@
+<!-- Research progress partial for HTMX -->
+<div class="research-progress">
+    <div class="progress-step {{ 'active' if status == 'running' else 'done' }}">
+        <div class="step-icon">{{ '⟳' if status == 'running' else '✓' }}</div>
+        <span>{{ message }}</span>
+    </div>
+</div>

@@ -1,0 +1,26 @@
+<!-- DOM tree partial for HTMX -->
+<div class="dom-tree">
+    {% macro render_node(node, depth=0) %}
+    {% if node and node.nodeType == 1 %}
+    <div class="dom-node" style="padding-left: {{ depth * 16 }}px">
+        {% if node.children and node.children|length > 0 %}
+        <span style="cursor:pointer">▸</span>
+        {% endif %}
+        <span class="tag-name">&lt;{{ (node.nodeName or 'div')|lower }}</span>
+        {% for i in range(0, (node.attributes or [])|length, 2) %}
+        <span class="attr-name"> {{ node.attributes[i] }}</span>
+        <span class="attr-value">="{{ node.attributes[i+1] }}"</span>
+        {% endfor %}
+        <span class="tag-name">&gt;</span>
+    </div>
+    {% if node.children %}
+    <div class="dom-node-children">
+        {% for child in node.children %}
+        {{ render_node(child, depth + 1) }}
+        {% endfor %}
+    </div>
+    {% endif %}
+    {% endif %}
+    {% endmacro %}
+    {{ render_node(dom) }}
+</div>

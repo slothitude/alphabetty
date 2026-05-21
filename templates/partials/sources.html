@@ -1,0 +1,12 @@
+<!-- Sources bar partial for HTMX -->
+<div class="sources-bar">
+    {% for s in sources %}
+    <div class="source-card" onclick="window.open('{{ s.url }}', '_blank')">
+        <div>
+            <span class="source-index">[{{ s.index }}]</span>
+            <span class="source-title">{{ s.title }}</span>
+        </div>
+        <div class="source-domain">{{ s.domain }}</div>
+    </div>
+    {% endfor %}
+</div>

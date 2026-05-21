@@ -1,0 +1,10 @@
+data/
+uploads/
+chrome-profile/
+__pycache__/
+*.pyc
+.git
+.env
+*.db
+build_status.txt
+build.bat

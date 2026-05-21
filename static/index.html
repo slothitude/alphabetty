@@ -1,0 +1,114 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="dark">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Alphabetty</title>
+    <link rel="stylesheet" href="/static/css/app.css">
+    <script src="https://unpkg.com/htmx.org@2.0.4"></script>
+    <script src="https://cdn.tailwindcss.com"></script>
+</head>
+<body>
+<div class="app-layout">
+    <!-- Sidebar -->
+    <aside class="sidebar">
+        <div class="sidebar-header">
+            <h1>Alphabetty</h1>
+            <button class="new-chat-btn" onclick="app.newChat()">+ New</button>
+        </div>
+        <div class="sidebar-nav">
+            <button class="active" data-tab="chats" onclick="app.switchTab('chats')">Chats</button>
+            <button data-tab="spaces" onclick="app.switchTab('spaces')">Spaces</button>
+            <button data-tab="dom" onclick="app.toggleDomPanel()">DOM</button>
+        </div>
+        <div class="sidebar-filter">
+            <input id="sidebar-filter-input" placeholder="Filter conversations..."
+                   oninput="app.filterSidebar(this.value)" />
+        </div>
+        <div class="sidebar-list" id="sidebar-list"></div>
+        <div class="sidebar-footer">
+            <button class="theme-toggle" onclick="app.toggleTheme()">Toggle Theme</button>
+            <span style="flex:1"></span>
+            <span style="font-size:11px;color:var(--text-muted)">Alphabetty v1</span>
+        </div>
+    </aside>
+
+    <!-- Main Content -->
+    <div class="main-content" id="main-content">
+        <!-- Welcome / Chat -->
+        <div class="chat-area" id="chat-area">
+            <div class="welcome" id="welcome">
+                <h2>What do you want to know?</h2>
+                <p>Search the web, analyze pages, control Chrome, and get AI-powered answers with inline citations.</p>
+            </div>
+        </div>
+
+        <!-- Input -->
+        <div class="input-area">
+            <div class="input-wrapper">
+                <div class="input-row">
+                    <textarea id="chat-input" rows="1" placeholder="Ask anything... (Shift+Enter for newline)"
+                              onkeydown="app.handleInputKey(event)"></textarea>
+                    <div class="input-controls">
+                        <button class="icon-btn" onclick="app.uploadFile()" title="Upload file">📎</button>
+                        <button class="icon-btn" onclick="app.toggleProSearch()" title="Deep Research"
+                                id="pro-search-btn">🔬</button>
+                        <button class="icon-btn" onclick="app.toggleAgent()" title="Agent Mode (autonomous browsing)"
+                                id="agent-btn">🤖</button>
+                        <button class="send-btn" id="send-btn" onclick="app.send()">Send</button>
+                    </div>
+                </div>
+                <div class="input-options">
+                    <div class="mode-selector">
+                        <label>Mode:</label>
+                        <select id="mode-select" onchange="app.setMode(this.value)">
+                            <option value="concise">Concise</option>
+                            <option value="detailed">Detailed</option>
+                            <option value="creative">Creative</option>
+                            <option value="academic">Academic</option>
+                            <option value="code">Code</option>
+                        </select>
+                    </div>
+                    <div class="search-toggle">
+                        <label>
+                            <input type="checkbox" id="search-toggle" checked>
+                            Web Search
+                        </label>
+                    </div>
+                    <span id="pro-search-label" style="color:var(--accent);display:none;font-weight:600">Pro Search ON</span>
+                    <span id="agent-label" style="color:#22c55e;display:none;font-weight:600">Agent ON</span>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- DOM Panel (toggle) -->
+    <div class="dom-panel" id="dom-panel">
+        <div class="dom-panel-header">
+            <h3>DOM Inspector</h3>
+            <div>
+                <button class="icon-btn" onclick="app.refreshDom()">Refresh</button>
+                <button class="icon-btn" onclick="app.toggleDomPanel()">✕</button>
+            </div>
+        </div>
+        <div style="padding:8px;border-bottom:1px solid var(--border)">
+            <input id="cdp-url-bar" placeholder="Enter URL..." style="width:100%;background:var(--bg-tertiary);border:1px solid var(--border);border-radius:6px;padding:6px 10px;color:var(--text-primary);font-size:13px" onkeydown="if(event.key==='Enter')app.navigateCdp(this.value)">
+        </div>
+        <div class="dom-tree" id="dom-tree">
+            <div style="padding:16px;color:var(--text-muted);text-align:center">No page loaded</div>
+        </div>
+    </div>
+</div>
+
+<input type="file" id="file-upload" style="display:none" onchange="app.handleFileUpload(this)">
+
+<script src="/static/js/app.js"></script>
+<script src="/static/js/chat.js"></script>
+<script src="/static/js/search.js"></script>
+<script src="/static/js/dom-panel.js"></script>
+<script src="/static/js/research.js"></script>
+<script src="/static/js/spaces.js"></script>
+<script src="/static/js/export.js"></script>
+<script src="/static/js/graph.js"></script>
+</body>
+</html>
