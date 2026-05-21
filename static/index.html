@@ -3,99 +3,186 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Alphabetty</title>
+    <title>Alphabetty — The Search Engine of the Future</title>
+    <link rel="icon" type="image/svg+xml" href="/static/favicon.svg">
     <link rel="stylesheet" href="/static/css/app.css">
     <script src="https://unpkg.com/htmx.org@2.0.4"></script>
-    <script src="https://cdn.tailwindcss.com"></script>
 </head>
 <body>
-<div class="app-layout">
-    <!-- Sidebar -->
-    <aside class="sidebar">
-        <div class="sidebar-header">
-            <h1>Alphabetty</h1>
-            <button class="new-chat-btn" onclick="app.newChat()">+ New</button>
-        </div>
-        <div class="sidebar-nav">
-            <button class="active" data-tab="chats" onclick="app.switchTab('chats')">Chats</button>
-            <button data-tab="spaces" onclick="app.switchTab('spaces')">Spaces</button>
-            <button data-tab="dom" onclick="app.toggleDomPanel()">DOM</button>
-        </div>
-        <div class="sidebar-filter">
-            <input id="sidebar-filter-input" placeholder="Filter conversations..."
-                   oninput="app.filterSidebar(this.value)" />
-        </div>
-        <div class="sidebar-list" id="sidebar-list"></div>
-        <div class="sidebar-footer">
-            <button class="theme-toggle" onclick="app.toggleTheme()">Toggle Theme</button>
-            <span style="flex:1"></span>
-            <span style="font-size:11px;color:var(--text-muted)">Alphabetty v1</span>
-        </div>
-    </aside>
 
-    <!-- Main Content -->
-    <div class="main-content" id="main-content">
-        <!-- Welcome / Chat -->
-        <div class="chat-area" id="chat-area">
-            <div class="welcome" id="welcome">
-                <h2>What do you want to know?</h2>
-                <p>Search the web, analyze pages, control Chrome, and get AI-powered answers with inline citations.</p>
+<!-- Splash screen -->
+<div class="splash" id="splash">
+    <img src="/static/icon.svg" alt="Alphabetty" class="splash-icon">
+    <div class="splash-brand">Alphabetty</div>
+    <div class="splash-tagline">The Search Engine of the Future</div>
+    <div class="splash-dots"><span></span><span></span><span></span></div>
+</div>
+
+<div class="frame">
+    <!-- Chrome Bar (44px) -->
+    <header class="chrome-bar">
+        <div class="chrome-logo" onclick="app.newChat()">
+            <img src="/static/favicon.svg" alt="Alphabetty" style="width:22px;height:22px">
+            <span class="chrome-logo-text">Alphabetty</span>
+        </div>
+
+        <div class="chrome-omnibar">
+            <span style="color:var(--t4);font-size:13px">&#x1F50D;</span>
+            <input id="omnibar-input" placeholder="Ask anything..." onkeydown="if(event.key==='Enter'){app.omnibarSubmit(this.value);this.value=''}">
+        </div>
+
+        <div class="chrome-status">
+            <div class="status-dot" id="status-chrome" title="Chrome CDP"></div>
+            <div class="status-dot" id="status-search" title="SearXNG"></div>
+            <div class="status-dot" id="status-llm" title="LLM"></div>
+        </div>
+    </header>
+
+    <!-- Canvas (three-panel) -->
+    <div class="canvas">
+        <!-- Nav Panel (left, 280px) -->
+        <aside class="nav-panel" id="nav-panel">
+            <div class="nav-header">
+                <span style="font-size:12px;color:var(--t3);font-weight:600">Threads</span>
+                <button onclick="app.newChat()">+ New</button>
             </div>
-        </div>
 
-        <!-- Input -->
-        <div class="input-area">
-            <div class="input-wrapper">
-                <div class="input-row">
-                    <textarea id="chat-input" rows="1" placeholder="Ask anything... (Shift+Enter for newline)"
-                              onkeydown="app.handleInputKey(event)"></textarea>
-                    <div class="input-controls">
-                        <button class="icon-btn" onclick="app.uploadFile()" title="Upload file">📎</button>
-                        <button class="icon-btn" onclick="app.toggleProSearch()" title="Deep Research"
-                                id="pro-search-btn">🔬</button>
-                        <button class="icon-btn" onclick="app.toggleAgent()" title="Agent Mode (autonomous browsing)"
-                                id="agent-btn">🤖</button>
-                        <button class="send-btn" id="send-btn" onclick="app.send()">Send</button>
+            <div class="nav-tabs">
+                <button class="nav-tab active" data-tab="chats" onclick="app.switchTab('chats')">Chats</button>
+                <button class="nav-tab" data-tab="spaces" onclick="app.switchTab('spaces')">Spaces</button>
+                <button class="nav-tab" data-tab="dom" onclick="app.toggleDomPanel()">DOM</button>
+            </div>
+
+            <div class="space-chips" id="space-chips"></div>
+
+            <div class="nav-filter">
+                <input id="nav-filter-input" placeholder="Filter threads..." oninput="app.filterSidebar(this.value)">
+            </div>
+
+            <div class="nav-list" id="nav-list"></div>
+
+            <div class="kg-thumb" id="kg-thumb">
+                <div class="kg-thumb-title">Knowledge Graph</div>
+                <canvas id="kg-canvas"></canvas>
+            </div>
+
+            <div style="padding:8px 10px;border-top:1px solid var(--border);display:flex;gap:6px;align-items:center;flex-shrink:0">
+                <button class="icon-btn" onclick="app.toggleTheme()" title="Toggle theme" style="font-size:12px">&#9790;</button>
+                <span style="flex:1"></span>
+                <span style="font-size:10px;color:var(--t5)">Alphabetty v2</span>
+            </div>
+        </aside>
+
+        <!-- Intel Panel (center, flex-1) -->
+        <div class="intel-panel" id="intel-panel">
+            <!-- Ambient stats bar -->
+            <div class="ambient-bar" id="ambient-bar">
+                <div class="ambient-stat"><span>Threads</span> <span class="stat-val" id="stat-threads">0</span></div>
+                <div class="ambient-stat"><span>Sources</span> <span class="stat-val" id="stat-sources">0</span></div>
+                <div class="ambient-stat"><span>Entities</span> <span class="stat-val" id="stat-entities">0</span></div>
+                <span style="flex:1"></span>
+                <div class="ambient-stat" id="viewport-toggle" style="cursor:pointer;color:var(--t4)" onclick="app.toggleViewport()" title="Toggle Chrome viewport">
+                    <span>&#x1F4FA;</span> <span>Viewport</span>
+                </div>
+            </div>
+
+            <!-- Pipeline stages (shown during research/agent) -->
+            <div class="pipeline" id="pipeline" style="display:none">
+                <div class="pipeline-node" data-stage="plan">Plan</div>
+                <div class="pipeline-connector"></div>
+                <div class="pipeline-node" data-stage="search">Search</div>
+                <div class="pipeline-connector"></div>
+                <div class="pipeline-node" data-stage="extract">Extract</div>
+                <div class="pipeline-connector"></div>
+                <div class="pipeline-node" data-stage="analyze">Analyze</div>
+                <div class="pipeline-connector"></div>
+                <div class="pipeline-node" data-stage="synth">Synthesize</div>
+            </div>
+
+            <!-- Surface (scrollable main area) -->
+            <div class="surface" id="surface">
+                <div class="welcome" id="welcome">
+                    <!-- Cat detective icon -->
+                    <img src="/static/icon.svg" alt="Alphabetty" style="width:72px;height:72px;opacity:0.9" id="welcome-icon">
+                    <h2>What do you want to know?</h2>
+                    <span class="brand-tagline">The Search Engine of the Future</span>
+                    <p>Search the web, analyze pages, control Chrome, and get AI-powered answers with inline citations.</p>
+                    <div class="welcome-commands">
+                        <button class="welcome-cmd" onclick="app.fillInput('/research latest AI breakthroughs')">/research AI</button>
+                        <button class="welcome-cmd" onclick="app.fillInput('/agent summarize the top news')">/agent news</button>
+                        <button class="welcome-cmd" onclick="app.fillInput('What is quantum computing?')">Ask anything</button>
                     </div>
                 </div>
-                <div class="input-options">
-                    <div class="mode-selector">
-                        <label>Mode:</label>
-                        <select id="mode-select" onchange="app.setMode(this.value)">
-                            <option value="concise">Concise</option>
-                            <option value="detailed">Detailed</option>
-                            <option value="creative">Creative</option>
-                            <option value="academic">Academic</option>
-                            <option value="code">Code</option>
-                        </select>
+            </div>
+
+            <!-- Viewport container (hidden by default, shown between surface and input) -->
+            <div class="viewport-container" id="viewport-container" style="display:none">
+                <span class="viewport-label" id="viewport-label">Chrome Viewport</span>
+                <button class="viewport-close" onclick="app.toggleViewport()">&#10005;</button>
+                <img id="viewport-mjpeg" src="" alt="" style="display:none">
+                <iframe id="viewport-youtube" src="" style="display:none" allow="autoplay; encrypted-media" allowfullscreen></iframe>
+            </div>
+
+            <!-- Input Dock -->
+            <div class="input-dock">
+                <div class="input-wrapper">
+                    <div class="input-row">
+                        <textarea id="chat-input" rows="1" placeholder="Ask anything..." onkeydown="app.handleInputKey(event)"></textarea>
+                        <div class="input-controls">
+                            <button class="icon-btn" onclick="app.uploadFile()" title="Upload file">&#128206;</button>
+                            <button class="icon-btn" onclick="app.toggleProSearch()" title="Deep Research" id="pro-search-btn">&#128300;</button>
+                            <button class="icon-btn" onclick="app.toggleAgent()" title="Agent Mode" id="agent-btn">&#129302;</button>
+                            <button class="send-btn" id="send-btn" onclick="app.send()">&#8594;</button>
+                        </div>
                     </div>
-                    <div class="search-toggle">
-                        <label>
-                            <input type="checkbox" id="search-toggle" checked>
-                            Web Search
-                        </label>
+                    <div class="input-options">
+                        <div class="mode-pills" id="mode-pills">
+                            <button class="mode-pill active" data-mode="concise" onclick="app.setModePill('concise')">Web</button>
+                            <button class="mode-pill" data-mode="detailed" onclick="app.setModePill('detailed')">Agent</button>
+                            <button class="mode-pill" data-mode="research" onclick="app.setModePill('research')">Deep</button>
+                        </div>
+                        <span id="pro-search-label" class="toggle-pill on" style="display:none" onclick="app.toggleProSearch()">&#128300; Pro Search</span>
+                        <span id="agent-label" class="toggle-pill on" style="display:none" onclick="app.toggleAgent()">&#129302; Agent</span>
                     </div>
-                    <span id="pro-search-label" style="color:var(--accent);display:none;font-weight:600">Pro Search ON</span>
-                    <span id="agent-label" style="color:#22c55e;display:none;font-weight:600">Agent ON</span>
                 </div>
             </div>
         </div>
-    </div>
 
-    <!-- DOM Panel (toggle) -->
-    <div class="dom-panel" id="dom-panel">
-        <div class="dom-panel-header">
-            <h3>DOM Inspector</h3>
-            <div>
-                <button class="icon-btn" onclick="app.refreshDom()">Refresh</button>
-                <button class="icon-btn" onclick="app.toggleDomPanel()">✕</button>
+        <!-- Feed Panel (right, 320px) -->
+        <aside class="feed-panel" id="feed-panel">
+            <div class="feed-header">
+                <button class="feed-tab active" data-feed="trace" onclick="app.switchFeedTab('trace')">Trace</button>
+                <button class="feed-tab" data-feed="entities" onclick="app.switchFeedTab('entities')">Entities</button>
+                <button class="feed-tab" data-feed="domains" onclick="app.switchFeedTab('domains')">Domains</button>
             </div>
-        </div>
-        <div style="padding:8px;border-bottom:1px solid var(--border)">
-            <input id="cdp-url-bar" placeholder="Enter URL..." style="width:100%;background:var(--bg-tertiary);border:1px solid var(--border);border-radius:6px;padding:6px 10px;color:var(--text-primary);font-size:13px" onkeydown="if(event.key==='Enter')app.navigateCdp(this.value)">
-        </div>
-        <div class="dom-tree" id="dom-tree">
-            <div style="padding:16px;color:var(--text-muted);text-align:center">No page loaded</div>
+            <div class="feed-content" id="feed-content">
+                <div id="feed-trace" class="feed-section">
+                    <div style="padding:24px;text-align:center;color:var(--t4);font-size:12px">Agent trace will appear here</div>
+                </div>
+                <div id="feed-entities" class="feed-section" style="display:none">
+                    <div style="padding:24px;text-align:center;color:var(--t4);font-size:12px">Entities extracted from conversations</div>
+                </div>
+                <div id="feed-domains" class="feed-section" style="display:none">
+                    <div style="padding:24px;text-align:center;color:var(--t4);font-size:12px">Domains discovered in research</div>
+                </div>
+            </div>
+        </aside>
+
+        <!-- DOM Panel (toggle overlay) -->
+        <div class="dom-panel" id="dom-panel">
+            <div class="dom-panel-header">
+                <h3>DOM Inspector</h3>
+                <div>
+                    <button class="icon-btn" onclick="app.refreshDom()">Refresh</button>
+                    <button class="icon-btn" onclick="app.toggleDomPanel()">&#10005;</button>
+                </div>
+            </div>
+            <div style="padding:6px;border-bottom:1px solid var(--border)">
+                <input id="cdp-url-bar" placeholder="Enter URL..." style="width:100%;background:var(--ink3);border:1px solid var(--border);border-radius:4px;padding:5px 8px;color:var(--t1);font-size:12px" onkeydown="if(event.key==='Enter')app.navigateCdp(this.value)">
+            </div>
+            <div class="dom-tree" id="dom-tree">
+                <div style="padding:14px;color:var(--t4);text-align:center">No page loaded</div>
+            </div>
         </div>
     </div>
 </div>

@@ -1,28 +1,26 @@
-/* Alphabetty — Deep Research */
+/* Alphabetty — Deep Research v2 */
 
 app.runResearch = async function(query, mode) {
     app.streaming = true;
     app.setSendDisabled(true);
 
-    const chatArea = document.getElementById('chat-area');
+    const surface = document.getElementById('surface');
 
-    // Progress container
-    const progressDiv = document.createElement('div');
-    progressDiv.className = 'research-progress';
-    progressDiv.id = 'research-progress';
-    chatArea.appendChild(progressDiv);
+    // Show pipeline
+    app.updatePipeline('plan');
+    app.clearTrace();
 
     // Response bubble
     const bubble = document.createElement('div');
     bubble.className = 'message message-assistant';
     bubble.innerHTML = '<div class="message-bubble streaming-cursor" id="current-response"></div>';
-    chatArea.appendChild(bubble);
+    surface.appendChild(bubble);
 
-    // Source bar
-    const sourcesBar = document.createElement('div');
-    sourcesBar.className = 'sources-bar';
-    sourcesBar.id = 'current-sources';
-    chatArea.appendChild(sourcesBar);
+    // Source grid
+    const sourceGrid = document.createElement('div');
+    sourceGrid.className = 'source-grid';
+    sourceGrid.id = 'current-sources';
+    surface.appendChild(sourceGrid);
 
     app.scrollToBottom();
 
@@ -42,6 +40,15 @@ app.runResearch = async function(query, mode) {
     let fullText = '';
     let sources = [];
 
+    // Map progress messages to pipeline stages
+    const progressToStage = {
+        'Planning queries': 'plan',
+        'Searching': 'search',
+        'Extracting': 'extract',
+        'Analyzing': 'analyze',
+        'Synthesizing': 'synth',
+    };
+
     while (true) {
         const { done, value } = await reader.read();
         if (done) break;
@@ -55,26 +62,24 @@ app.runResearch = async function(query, mode) {
                 const data = JSON.parse(line.slice(6));
 
                 if (data.type === 'progress') {
-                    const step = document.createElement('div');
-                    step.className = 'progress-step active';
-                    step.innerHTML = `<div class="step-icon">⟳</div><span>${data.message}</span>`;
-                    progressDiv.appendChild(step);
-                    app.scrollToBottom();
+                    // Route to pipeline + trace
+                    app.appendTraceLog(data);
 
-                    // Mark previous steps as done
-                    progressDiv.querySelectorAll('.progress-step').forEach(s => {
-                        if (s !== step) {
-                            s.classList.remove('active');
-                            s.classList.add('done');
-                            s.querySelector('.step-icon').textContent = '✓';
+                    // Update pipeline stage based on message content
+                    for (const [keyword, stage] of Object.entries(progressToStage)) {
+                        if ((data.message || '').toLowerCase().includes(keyword.toLowerCase())) {
+                            app.updatePipeline(stage);
+                            break;
                         }
-                    });
+                    }
+                    app.scrollToBottom();
                 } else if (data.type === 'token') {
                     fullText += data.content;
                     const responseEl = document.getElementById('current-response');
                     if (responseEl) {
                         responseEl.innerHTML = app.renderMarkdown(fullText);
                     }
+                    app.updatePipeline('synth');
                     app.scrollToBottom();
                 } else if (data.type === 'done') {
                     app.currentConvId = data.conversation_id;
@@ -82,6 +87,7 @@ app.runResearch = async function(query, mode) {
                     app.loadConversations();
                 } else if (data.type === 'error') {
                     fullText += `\n\n**Error:** ${data.error}`;
+                    app.appendTraceLog(data);
                 }
             } catch (e) {}
         }
@@ -95,14 +101,15 @@ app.runResearch = async function(query, mode) {
     }
 
     if (sources.length) {
-        sourcesBar.innerHTML = sources.map(s => app.createSourceCard(s)).join('');
-        sourcesBar.id = '';
+        sourceGrid.innerHTML = sources.map(s => app.createSourceCard(s)).join('');
+        sourceGrid.id = '';
+        const srcEl = document.getElementById('stat-sources');
+        if (srcEl) srcEl.textContent = (parseInt(srcEl.textContent) || 0) + sources.length;
     } else {
-        sourcesBar.remove();
+        sourceGrid.remove();
     }
 
-    progressDiv.id = '';
-
+    app.hidePipeline();
     app.streaming = false;
     app.setSendDisabled(false);
     app.scrollToBottom();

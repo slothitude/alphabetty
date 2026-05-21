@@ -15,5 +15,9 @@ pymupdf==1.26.1
 reportlab==4.4.1
 # Chrome CDP stealth injection
 websocket-client>=1.8.0
+# Screen recording video compilation
+opencv-python-headless>=4.10.0
 # MCP server (external agent tools)
 fastmcp>=2.0
+# YouTube search/play (more reliable than DOM scraping)
+yt-dlp>=2024.1

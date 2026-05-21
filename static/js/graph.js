@@ -2,7 +2,6 @@
 
 const graph = {
 
-    // Quick search bar (Ctrl+Shift+K)
     async search(query) {
         if (!query || query.length < 2) return;
         const resp = await fetch(`/api/graph/search?q=${encodeURIComponent(query)}&limit=10`);
@@ -10,19 +9,16 @@ const graph = {
         return data;
     },
 
-    // Get stats
     async stats() {
         const resp = await fetch('/api/graph/stats');
         return await resp.json();
     },
 
-    // Entity graph
     async entity(name) {
         const resp = await fetch(`/api/graph/entity/${encodeURIComponent(name)}`);
         return await resp.json();
     },
 
-    // Tags
     async listTags() {
         const resp = await fetch('/api/tags');
         return await resp.json();
@@ -45,7 +41,63 @@ const graph = {
     },
 };
 
+// ─── KG Thumbnail (mini constellation in left panel) ───
+
+app.renderKGThumb = async function() {
+    const canvas = document.getElementById('kg-canvas');
+    if (!canvas) return;
+
+    try {
+        const stats = await graph.stats();
+        if (!stats.entity_count || stats.entity_count === 0) return;
+
+        const ctx = canvas.getContext('2d');
+        const w = canvas.offsetWidth || 240;
+        const h = 80;
+        canvas.width = w * 2;
+        canvas.height = h * 2;
+        ctx.scale(2, 2);
+
+        // Draw simple constellation
+        const count = Math.min(stats.entity_count || 0, 20);
+        const nodes = [];
+        for (let i = 0; i < count; i++) {
+            nodes.push({
+                x: 20 + Math.random() * (w - 40),
+                y: 10 + Math.random() * (h - 20),
+                r: 2 + Math.random() * 2,
+            });
+        }
+
+        // Draw connections
+        ctx.strokeStyle = 'rgba(232, 160, 32, 0.15)';
+        ctx.lineWidth = 0.5;
+        for (let i = 0; i < nodes.length; i++) {
+            for (let j = i + 1; j < nodes.length; j++) {
+                const dx = nodes[i].x - nodes[j].x;
+                const dy = nodes[i].y - nodes[j].y;
+                const dist = Math.sqrt(dx * dx + dy * dy);
+                if (dist < 60) {
+                    ctx.beginPath();
+                    ctx.moveTo(nodes[i].x, nodes[i].y);
+                    ctx.lineTo(nodes[j].x, nodes[j].y);
+                    ctx.stroke();
+                }
+            }
+        }
+
+        // Draw nodes
+        for (const node of nodes) {
+            ctx.beginPath();
+            ctx.arc(node.x, node.y, node.r, 0, Math.PI * 2);
+            ctx.fillStyle = 'rgba(232, 160, 32, 0.6)';
+            ctx.fill();
+        }
+    } catch {}
+};
+
 // ─── Search overlay ───
+
 app.showLocalSearch = function() {
     let overlay = document.getElementById('local-search-overlay');
     if (overlay) { overlay.remove(); return; }
@@ -55,16 +107,16 @@ app.showLocalSearch = function() {
     overlay.style.cssText = 'position:fixed;top:0;left:0;right:0;bottom:0;background:rgba(0,0,0,0.6);z-index:200;display:flex;align-items:flex-start;justify-content:center;padding-top:15vh;';
 
     const box = document.createElement('div');
-    box.style.cssText = 'background:var(--bg-secondary);border:1px solid var(--border);border-radius:12px;width:600px;max-height:60vh;overflow:hidden;display:flex;flex-direction:column;';
+    box.style.cssText = 'background:var(--ink2);border:1px solid var(--border);border-radius:10px;width:560px;max-height:55vh;overflow:hidden;display:flex;flex-direction:column;';
 
     box.innerHTML = `
-        <div style="padding:16px;border-bottom:1px solid var(--border);display:flex;gap:8px;align-items:center">
-            <span style="color:var(--text-muted)">🔍</span>
+        <div style="padding:14px;border-bottom:1px solid var(--border);display:flex;gap:8px;align-items:center">
+            <span style="color:var(--t4)">&#128269;</span>
             <input id="local-search-input" placeholder="Search conversations, messages, entities..."
-                style="flex:1;background:transparent;border:none;color:var(--text-primary);font-size:15px;outline:none">
-            <span style="font-size:11px;color:var(--text-muted)">ESC to close</span>
+                style="flex:1;background:transparent;border:none;color:var(--t1);font-size:14px;outline:none;font-family:var(--font-sans)">
+            <span style="font-size:10px;color:var(--t4)">ESC</span>
         </div>
-        <div id="local-search-results" style="padding:8px;overflow-y:auto;max-height:50vh"></div>
+        <div id="local-search-results" style="padding:6px;overflow-y:auto;max-height:45vh"></div>
     `;
 
     overlay.appendChild(box);
@@ -73,7 +125,6 @@ app.showLocalSearch = function() {
     const input = document.getElementById('local-search-input');
     input.focus();
 
-    // Debounced search
     let timer;
     input.oninput = () => {
         clearTimeout(timer);
@@ -82,16 +133,11 @@ app.showLocalSearch = function() {
             if (q.length < 2) return;
             const data = await graph.search(q);
             renderLocalResults(data);
-        }, 300);
+        }, 250);
     };
 
-    input.onkeydown = (e) => {
-        if (e.key === 'Escape') overlay.remove();
-    };
-
-    overlay.onclick = (e) => {
-        if (e.target === overlay) overlay.remove();
-    };
+    input.onkeydown = (e) => { if (e.key === 'Escape') overlay.remove(); };
+    overlay.onclick = (e) => { if (e.target === overlay) overlay.remove(); };
 };
 
 function renderLocalResults(data) {
@@ -100,44 +146,42 @@ function renderLocalResults(data) {
 
     let html = '';
 
-    if (data.conversations.length) {
-        html += '<div style="color:var(--text-muted);font-size:11px;padding:4px 8px;text-transform:uppercase">Conversations</div>';
+    if (data.conversations && data.conversations.length) {
+        html += '<div style="color:var(--t4);font-size:10px;padding:4px 8px;text-transform:uppercase">Conversations</div>';
         for (const c of data.conversations) {
-            html += `<div class="sidebar-item" onclick="app.loadConversation(${c.id});document.getElementById('local-search-overlay').remove()">
-                <span>💬</span>
-                <span class="item-title">${app.escapeHtml(c.title)}</span>
-                <span style="font-size:11px;color:var(--text-muted)">${c.updated_at ? new Date(c.updated_at).toLocaleDateString() : ''}</span>
+            html += `<div class="nav-item" onclick="app.loadConversation(${c.id});document.getElementById('local-search-overlay').remove()">
+                <span class="item-title" style="font-size:13px">${app.escapeHtml(c.title)}</span>
+                <span style="font-size:10px;color:var(--t4)">${c.updated_at ? new Date(c.updated_at).toLocaleDateString() : ''}</span>
             </div>`;
         }
     }
 
-    if (data.messages.length) {
-        html += '<div style="color:var(--text-muted);font-size:11px;padding:4px 8px;margin-top:8px;text-transform:uppercase">Messages</div>';
-        for (const m of data.messages.slice(0, 10)) {
-            const preview = m.content.slice(0, 120).replace(/\n/g, ' ');
-            html += `<div class="sidebar-item" onclick="app.loadConversation(${m.conversation_id});document.getElementById('local-search-overlay').remove()">
-                <span>${m.role === 'user' ? '👤' : '🤖'}</span>
-                <span class="item-title" style="flex-direction:column">
-                    <span style="font-size:13px">${app.escapeHtml(preview)}...</span>
-                    <span style="font-size:11px;color:var(--text-muted)">${app.escapeHtml(m.conversation_title || '')}</span>
+    if (data.messages && data.messages.length) {
+        html += '<div style="color:var(--t4);font-size:10px;padding:4px 8px;margin-top:6px;text-transform:uppercase">Messages</div>';
+        for (const m of data.messages.slice(0, 8)) {
+            const preview = m.content.slice(0, 100).replace(/\n/g, ' ');
+            html += `<div class="nav-item" onclick="app.loadConversation(${m.conversation_id});document.getElementById('local-search-overlay').remove()">
+                <span class="item-content">
+                    <span style="font-size:12px">${app.escapeHtml(preview)}...</span>
+                    <span style="font-size:10px;color:var(--t4)">${app.escapeHtml(m.conversation_title || '')}</span>
                 </span>
             </div>`;
         }
     }
 
-    if (data.entities.length) {
-        html += '<div style="color:var(--text-muted);font-size:11px;padding:4px 8px;margin-top:8px;text-transform:uppercase">Entities</div>';
+    if (data.entities && data.entities.length) {
+        html += '<div style="color:var(--t4);font-size:10px;padding:4px 8px;margin-top:6px;text-transform:uppercase">Entities</div>';
         for (const e of data.entities) {
-            html += `<div class="sidebar-item" onclick="app.loadConversation(null)">
-                <span>🏷️</span>
+            html += `<div class="nav-item">
+                <div class="entity-dot"></div>
                 <span class="item-title">${app.escapeHtml(e.name)}</span>
-                <span style="font-size:11px;color:var(--text-muted)">${e.mention_count} mentions</span>
+                <span style="font-size:10px;color:var(--t4)">${e.mention_count}x</span>
             </div>`;
         }
     }
 
     if (!data.total) {
-        html = '<div style="padding:24px;text-align:center;color:var(--text-muted)">No results found</div>';
+        html = '<div style="padding:20px;text-align:center;color:var(--t4);font-size:12px">No results found</div>';
     }
 
     container.innerHTML = html;

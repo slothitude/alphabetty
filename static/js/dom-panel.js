@@ -1,4 +1,4 @@
-/* Alphabetty — DOM Panel (Chrome CDP) */
+/* Alphabetty — DOM Panel + Viewport v2 */
 
 const domPanel = {
     async loadTabs() {
@@ -9,7 +9,7 @@ const domPanel = {
 
     async refresh() {
         const domTree = document.getElementById('dom-tree');
-        domTree.innerHTML = '<div style="padding:16px;color:var(--text-muted);text-align:center">Loading DOM...</div>';
+        domTree.innerHTML = '<div style="padding:14px;color:var(--t4);text-align:center">Loading DOM...</div>';
 
         try {
             const resp = await fetch('/api/cdp/dom?depth=3');
@@ -19,7 +19,7 @@ const domPanel = {
                 domTree.appendChild(this.renderNode(data.dom, 0));
             }
         } catch (e) {
-            domTree.innerHTML = `<div style="padding:16px;color:var(--error)">Chrome not available. Make sure headless Chrome is running.</div>`;
+            domTree.innerHTML = `<div style="padding:14px;color:var(--error)">Chrome not available.</div>`;
         }
     },
 
@@ -30,12 +30,12 @@ const domPanel = {
 
         const nodeEl = document.createElement('div');
         nodeEl.className = 'dom-node';
-        nodeEl.style.paddingLeft = (depth * 16) + 'px';
+        nodeEl.style.paddingLeft = (depth * 14) + 'px';
 
         const hasChildren = node.children && node.children.length > 0;
 
         if (hasChildren) {
-            nodeEl.textContent = '▸ ';
+            nodeEl.textContent = '\u25B8 ';
             nodeEl.style.cursor = 'pointer';
         }
 
@@ -45,7 +45,6 @@ const domPanel = {
 
         nodeEl.appendChild(tag);
 
-        // Attributes
         if (node.attributes) {
             for (let i = 0; i < node.attributes.length; i += 2) {
                 const attrName = document.createElement('span');
@@ -68,7 +67,6 @@ const domPanel = {
 
         el.appendChild(nodeEl);
 
-        // Children container
         if (hasChildren) {
             const childContainer = document.createElement('div');
             childContainer.className = 'dom-node-children';
@@ -85,9 +83,8 @@ const domPanel = {
             nodeEl.onclick = (e) => {
                 e.stopPropagation();
                 childContainer.classList.toggle('open');
-                nodeEl.textContent = childContainer.classList.contains('open') ? '▾ ' : '▸ ';
+                nodeEl.textContent = childContainer.classList.contains('open') ? '\u25BE ' : '\u25B8 ';
                 nodeEl.appendChild(tag);
-                // Re-add attributes and close tag
                 if (node.attributes) {
                     for (let i = 0; i < node.attributes.length; i += 2) {
                         const an = document.createElement('span');
@@ -127,6 +124,7 @@ const domPanel = {
 
 // Wire up app methods
 app.refreshDom = () => domPanel.refresh();
+
 app.navigateCdp = async (url) => {
     if (!url.startsWith('http')) url = 'https://' + url;
     await fetch('/api/cdp/navigate', {
@@ -136,11 +134,10 @@ app.navigateCdp = async (url) => {
     });
     domPanel.refresh();
 };
+
 app.toggleDomPanel = () => {
     const panel = document.getElementById('dom-panel');
     app.domPanelOpen = !app.domPanelOpen;
     panel.classList.toggle('open', app.domPanelOpen);
-    if (app.domPanelOpen) {
-        domPanel.refresh();
-    }
+    if (app.domPanelOpen) domPanel.refresh();
 };

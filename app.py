@@ -8,6 +8,7 @@ from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine, async_sess
 
 from config import settings
 from models.conversation import Base
+import models.macro  # noqa: F401 — ensure table creation
 
 engine = create_async_engine(f"sqlite+aiosqlite:///{settings.db_path}", echo=False)
 async_session = async_sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)

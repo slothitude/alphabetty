@@ -1,4 +1,4 @@
-/* Alphabetty — App Core */
+/* Alphabetty — App Core v2 */
 const app = {
     currentConvId: null,
     conversations: [],
@@ -8,26 +8,43 @@ const app = {
     domPanelOpen: false,
     sidebarFilter: '',
     activeTagFilter: null,
+    viewportOpen: false,
+    viewportMode: null, // 'mjpeg' | 'youtube' | null
+    activeMode: 'concise',
 
     async init() {
         this.loadConversations();
         this.setupTextarea();
         this.setupSlashCommands();
         this.loadTheme();
+        this.initStatusPolling();
+        this.initFeedPanel();
+        this.renderAmbientBar();
+        this.renderKGThumb();
+        this.loadSpaceChips();
+        this.dismissSplash();
+    },
+
+    dismissSplash() {
+        setTimeout(() => {
+            const splash = document.getElementById('splash');
+            if (splash) {
+                splash.classList.add('fade-out');
+                setTimeout(() => splash.remove(), 500);
+            }
+        }, 1200);
     },
 
     setupTextarea() {
         const ta = document.getElementById('chat-input');
         ta.addEventListener('input', () => {
             ta.style.height = 'auto';
-            ta.style.height = Math.min(ta.scrollHeight, 200) + 'px';
-            // Slash command autocomplete
+            ta.style.height = Math.min(ta.scrollHeight, 180) + 'px';
             this.updateSlashAutocomplete(ta.value);
         });
     },
 
     handleInputKey(e) {
-        // Slash autocomplete navigation
         const ac = document.getElementById('slash-autocomplete');
         if (ac && ac.style.display !== 'none') {
             if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
@@ -52,21 +69,295 @@ const app = {
         }
     },
 
+    // ─── Omnibar ───
+
+    omnibarSubmit(val) {
+        if (!val.trim()) return;
+        document.getElementById('chat-input').value = val.trim();
+        this.send();
+    },
+
+    fillInput(text) {
+        const ta = document.getElementById('chat-input');
+        ta.value = text;
+        ta.focus();
+    },
+
+    // ─── Status Polling ───
+
+    initStatusPolling() {
+        const poll = async () => {
+            try {
+                const r = await fetch('/api/cdp/status');
+                const d = await r.json();
+                const el = document.getElementById('status-chrome');
+                el.className = 'status-dot ' + (d.status === 'running' ? 'ok' : 'err');
+            } catch { document.getElementById('status-chrome').className = 'status-dot err'; }
+
+            try {
+                const r = await fetch('/api/search?q=test&max_results=1');
+                document.getElementById('status-search').className = 'status-dot ok';
+            } catch { document.getElementById('status-search').className = 'status-dot warn'; }
+
+            document.getElementById('status-llm').className = 'status-dot gold';
+        };
+        poll();
+        setInterval(poll, 30000);
+    },
+
+    // ─── Ambient Bar ───
+
+    async renderAmbientBar() {
+        const threadEl = document.getElementById('stat-threads');
+        if (threadEl) threadEl.textContent = this.conversations.length;
+
+        try {
+            const stats = await graph.stats();
+            const entityEl = document.getElementById('stat-entities');
+            if (entityEl) entityEl.textContent = stats.entity_count || 0;
+        } catch {}
+    },
+
+    // ─── Mode Pills ───
+
+    setModePill(mode) {
+        document.querySelectorAll('.mode-pill').forEach(p => p.classList.remove('active'));
+        document.querySelector(`.mode-pill[data-mode="${mode}"]`).classList.add('active');
+        this.activeMode = mode;
+
+        // Map pill to actual behavior
+        if (mode === 'research') {
+            this.proSearch = true;
+            this.agentMode = false;
+        } else if (mode === 'detailed') {
+            this.proSearch = false;
+            this.agentMode = true;
+        } else {
+            this.proSearch = false;
+            this.agentMode = false;
+        }
+
+        // Update toggle indicators
+        document.getElementById('pro-search-label').style.display = this.proSearch ? '' : 'none';
+        document.getElementById('agent-label').style.display = this.agentMode ? '' : 'none';
+        document.getElementById('pro-search-btn').style.background = this.proSearch ? 'var(--gold-dim)' : '';
+        document.getElementById('agent-btn').style.background = this.agentMode ? 'var(--gold-dim)' : '';
+    },
+
+    // ─── Pipeline ───
+
+    updatePipeline(stage) {
+        const pipeline = document.getElementById('pipeline');
+        if (!pipeline) return;
+        pipeline.style.display = 'flex';
+
+        const stages = ['plan', 'search', 'extract', 'analyze', 'synth'];
+        const idx = stages.indexOf(stage);
+
+        pipeline.querySelectorAll('.pipeline-node').forEach((node, i) => {
+            node.classList.remove('active', 'done');
+            if (i < idx) node.classList.add('done');
+            else if (i === idx) node.classList.add('active');
+        });
+        pipeline.querySelectorAll('.pipeline-connector').forEach((conn, i) => {
+            conn.classList.toggle('done', i < idx);
+        });
+    },
+
+    hidePipeline() {
+        const pipeline = document.getElementById('pipeline');
+        if (pipeline) pipeline.style.display = 'none';
+    },
+
+    // ─── Feed Panel ───
+
+    initFeedPanel() {
+        // Default tab is trace
+    },
+
+    switchFeedTab(tab) {
+        document.querySelectorAll('.feed-tab').forEach(t => t.classList.remove('active'));
+        document.querySelector(`.feed-tab[data-feed="${tab}"]`).classList.add('active');
+
+        document.querySelectorAll('.feed-section').forEach(s => s.style.display = 'none');
+        const section = document.getElementById('feed-' + tab);
+        if (section) section.style.display = '';
+    },
+
+    appendTraceLog(event) {
+        const feed = document.getElementById('feed-trace');
+        if (!feed) return;
+
+        // Remove placeholder
+        const placeholder = feed.querySelector('div[style]');
+        if (placeholder && placeholder.textContent.includes('will appear')) placeholder.remove();
+
+        const entry = document.createElement('div');
+        let cls = 'trace-entry';
+        let html = '';
+
+        if (event.type === 'plan') {
+            cls += ' plan';
+            html = `<strong>Plan:</strong> ${this.escapeHtml((event.message || '').slice(0, 200))}`;
+        } else if (event.type === 'tool_call') {
+            cls += ' tool-call';
+            const icons = { search: '&#128269;', browse: '&#127760;', extract: '&#128203;', click: '&#128070;', type_text: '&#9000;', screenshot: '&#128248;', youtube_play: '&#9654;' };
+            const icon = icons[event.tool] || '&#128295;';
+            html = `${icon} <strong>${event.tool}</strong>(${JSON.stringify(event.args || {}).slice(0, 80)})`;
+        } else if (event.type === 'tool_result') {
+            cls += ' tool-result';
+            const preview = (event.summary || '').slice(0, 120).replace(/\n/g, ' ');
+            html = `<strong>&#10003; ${event.tool}</strong> ${this.escapeHtml(preview)}`;
+
+            // Handle youtube_play video_id
+            if (event.tool === 'youtube_play' && event.video_id) {
+                this.playYouTube(event.video_id);
+            }
+        } else if (event.type === 'reflection') {
+            cls += ' reflection';
+            html = `<strong>Reflect:</strong> ${this.escapeHtml((event.message || '').slice(0, 150))}`;
+        } else if (event.type === 'progress') {
+            cls += ' plan';
+            html = this.escapeHtml(event.message || '');
+        } else if (event.type === 'error') {
+            cls += ' error';
+            html = `<strong>Error:</strong> ${this.escapeHtml(event.error || '')}`;
+        }
+
+        if (!html) return;
+        entry.className = cls;
+        entry.innerHTML = html;
+        feed.appendChild(entry);
+
+        const feedContent = document.getElementById('feed-content');
+        if (feedContent) feedContent.scrollTop = feedContent.scrollHeight;
+    },
+
+    updateFeedEntities(entities) {
+        const feed = document.getElementById('feed-entities');
+        if (!feed || !entities || !entities.length) return;
+
+        const placeholder = feed.querySelector('div[style]');
+        if (placeholder) placeholder.remove();
+
+        feed.innerHTML = entities.map(e => `
+            <div class="entity-card">
+                <div class="entity-dot"></div>
+                <span class="entity-name">${this.escapeHtml(e.name)}</span>
+                <span class="entity-type">${this.escapeHtml(e.type || '')}</span>
+            </div>
+        `).join('');
+    },
+
+    updateFeedDomains(domains) {
+        const feed = document.getElementById('feed-domains');
+        if (!feed || !domains || !domains.length) return;
+
+        const placeholder = feed.querySelector('div[style]');
+        if (placeholder) placeholder.remove();
+
+        feed.innerHTML = domains.map(d => `
+            <div class="domain-card">
+                ${this.escapeHtml(d.domain || d)}
+                <span class="domain-count">${d.count || ''}</span>
+            </div>
+        `).join('');
+    },
+
+    clearTrace() {
+        const feed = document.getElementById('feed-trace');
+        if (feed) feed.innerHTML = '<div style="padding:24px;text-align:center;color:var(--t4);font-size:12px">Agent trace will appear here</div>';
+    },
+
+    // ─── Space Chips ───
+
+    async loadSpaceChips() {
+        try {
+            const resp = await fetch('/api/spaces');
+            const spaces = await resp.json();
+            const container = document.getElementById('space-chips');
+            if (!container || !spaces.length) return;
+            container.innerHTML = spaces.map(s =>
+                `<button class="space-chip" onclick="app.filterBySpace(${s.id})" style="border-color:${s.color || 'var(--border)'}">${this.escapeHtml(s.name)}</button>`
+            ).join('');
+        } catch {}
+    },
+
+    filterBySpace(spaceId) {
+        document.querySelectorAll('.space-chip').forEach(c => c.classList.remove('active'));
+        this.loadConversations();
+    },
+
+    // ─── Viewport ───
+
+    toggleViewport() {
+        if (this.viewportOpen) {
+            this.stopViewport();
+        } else {
+            this.startMjpegStream();
+        }
+    },
+
+    startMjpegStream() {
+        const container = document.getElementById('viewport-container');
+        const img = document.getElementById('viewport-mjpeg');
+        const iframe = document.getElementById('viewport-youtube');
+        const label = document.getElementById('viewport-label');
+
+        iframe.style.display = 'none';
+        img.style.display = 'block';
+        img.src = '/api/cdp/viewport/stream?fps=6&quality=50';
+        container.style.display = '';
+        label.textContent = 'Chrome Live';
+        this.viewportOpen = true;
+        this.viewportMode = 'mjpeg';
+    },
+
+    stopViewport() {
+        const container = document.getElementById('viewport-container');
+        const img = document.getElementById('viewport-mjpeg');
+        const iframe = document.getElementById('viewport-youtube');
+
+        img.src = '';
+        iframe.src = '';
+        img.style.display = 'none';
+        iframe.style.display = 'none';
+        container.style.display = 'none';
+        this.viewportOpen = false;
+        this.viewportMode = null;
+    },
+
+    playYouTube(videoId) {
+        const container = document.getElementById('viewport-container');
+        const img = document.getElementById('viewport-mjpeg');
+        const iframe = document.getElementById('viewport-youtube');
+        const label = document.getElementById('viewport-label');
+
+        img.src = '';
+        img.style.display = 'none';
+        iframe.style.display = 'block';
+        iframe.src = `https://www.youtube.com/embed/${videoId}?autoplay=1&rel=0`;
+        container.style.display = '';
+        label.textContent = 'YouTube';
+        this.viewportOpen = true;
+        this.viewportMode = 'youtube';
+    },
+
     // ─── Slash Commands ───
 
     setupSlashCommands() {
         this.slashCommands = [
-            { cmd: '/summarize', desc: 'Summarize the current conversation', icon: '📝' },
-            { cmd: '/export', desc: 'Export conversation as markdown', icon: '📤' },
-            { cmd: '/tag', desc: 'Add a tag to this conversation', icon: '🏷️', hasArg: true },
-            { cmd: '/search', desc: 'Search your past conversations', icon: '🔍', hasArg: true },
-            { cmd: '/agent', desc: 'Run agent mode on a query', icon: '🤖', hasArg: true },
-            { cmd: '/mode concise', desc: 'Switch to concise mode', icon: '⚡' },
-            { cmd: '/mode detailed', desc: 'Switch to detailed mode', icon: '📖' },
-            { cmd: '/mode creative', desc: 'Switch to creative mode', icon: '🎨' },
-            { cmd: '/mode academic', desc: 'Switch to academic mode', icon: '🎓' },
-            { cmd: '/mode code', desc: 'Switch to code mode', icon: '💻' },
-            { cmd: '/research', desc: 'Run deep research on a query', icon: '🔬', hasArg: true },
+            { cmd: '/summarize', desc: 'Summarize the current conversation', icon: '&#128221;' },
+            { cmd: '/export', desc: 'Export conversation as markdown', icon: '&#128228;' },
+            { cmd: '/tag', desc: 'Add a tag to this conversation', icon: '&#127991;', hasArg: true },
+            { cmd: '/search', desc: 'Search your past conversations', icon: '&#128269;', hasArg: true },
+            { cmd: '/agent', desc: 'Run agent mode on a query', icon: '&#129302;', hasArg: true },
+            { cmd: '/mode concise', desc: 'Switch to concise mode', icon: '&#9889;' },
+            { cmd: '/mode detailed', desc: 'Switch to detailed mode', icon: '&#128214;' },
+            { cmd: '/mode creative', desc: 'Switch to creative mode', icon: '&#127912;' },
+            { cmd: '/mode academic', desc: 'Switch to academic mode', icon: '&#127891;' },
+            { cmd: '/mode code', desc: 'Switch to code mode', icon: '&#128187;' },
+            { cmd: '/research', desc: 'Run deep research on a query', icon: '&#128300;', hasArg: true },
         ];
         this.selectedAutocompleteIdx = -1;
     },
@@ -139,7 +430,6 @@ const app = {
         } else {
             ta.value = cmd;
             ta.focus();
-            // Auto-send non-arg commands
             this.hideSlashAutocomplete();
             this.send();
             return;
@@ -153,22 +443,14 @@ const app = {
         const arg = parts.slice(1).join(' ');
 
         switch (cmd) {
-            case '/summarize':
-                return this.slashSummarize();
-            case '/export':
-                return this.slashExport();
-            case '/tag':
-                return this.slashTag(arg);
-            case '/search':
-                return this.slashSearch(arg);
-            case '/agent':
-                return this.slashAgent(arg);
-            case '/research':
-                return this.slashResearch(arg);
-            case '/mode':
-                return this.slashMode(arg);
-            default:
-                return text; // Not a command, send as normal
+            case '/summarize': return this.slashSummarize();
+            case '/export': return this.slashExport();
+            case '/tag': return this.slashTag(arg);
+            case '/search': return this.slashSearch(arg);
+            case '/agent': return this.slashAgent(arg);
+            case '/research': return this.slashResearch(arg);
+            case '/mode': return this.slashMode(arg);
+            default: return text;
         }
     },
 
@@ -188,8 +470,8 @@ const app = {
         if (!this.currentConvId || !tagName) return;
         await graph.addTag(this.currentConvId, tagName);
         this.loadConversations();
-        const chatArea = document.getElementById('chat-area');
-        chatArea.appendChild(this.createAssistantBubble(`Added tag: **${tagName}**`));
+        const surface = document.getElementById('surface');
+        surface.appendChild(this.createAssistantBubble(`Added tag: **${tagName}**`));
         this.scrollToBottom();
     },
 
@@ -208,8 +490,10 @@ const app = {
     slashAgent(query) {
         if (!query) return;
         this.agentMode = true;
-        document.getElementById('agent-btn').style.background = 'rgba(34,197,94,0.15)';
+        this.proSearch = false;
+        document.getElementById('agent-btn').style.background = 'var(--gold-dim)';
         document.getElementById('agent-label').style.display = '';
+        document.getElementById('pro-search-label').style.display = 'none';
         const input = document.getElementById('chat-input');
         input.value = query;
         this.send();
@@ -218,22 +502,20 @@ const app = {
     slashResearch(query) {
         if (!query) return;
         this.proSearch = true;
-        document.getElementById('pro-search-btn').style.background = 'var(--accent-dim)';
+        this.agentMode = false;
+        document.getElementById('pro-search-btn').style.background = 'var(--gold-dim)';
         document.getElementById('pro-search-label').style.display = '';
+        document.getElementById('agent-label').style.display = 'none';
         const input = document.getElementById('chat-input');
         input.value = query;
         this.send();
     },
 
     slashMode(mode) {
-        const select = document.getElementById('mode-select');
-        if (select.querySelector(`option[value="${mode}"]`)) {
-            select.value = mode;
-            this.setMode(mode);
-            const chatArea = document.getElementById('chat-area');
-            chatArea.appendChild(this.createAssistantBubble(`Mode switched to **${mode}**.`));
-            this.scrollToBottom();
-        }
+        this.setModePill(mode);
+        const surface = document.getElementById('surface');
+        surface.appendChild(this.createAssistantBubble(`Mode switched to **${mode}**.`));
+        this.scrollToBottom();
     },
 
     // ─── Conversations ───
@@ -241,13 +523,14 @@ const app = {
     async loadConversations() {
         const resp = await fetch('/api/conversations');
         this.conversations = await resp.json();
-        this.renderSidebar();
+        this.renderThreadList();
+        this.renderAmbientBar();
     },
 
-    renderSidebar() {
-        const list = document.getElementById('sidebar-list');
+    renderThreadList() {
+        const list = document.getElementById('nav-list');
+        if (!list) return;
 
-        // Apply filter
         let convs = this.conversations;
         if (this.sidebarFilter) {
             const f = this.sidebarFilter.toLowerCase();
@@ -263,7 +546,6 @@ const app = {
             );
         }
 
-        // Group by date
         const now = new Date();
         const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
         const yesterday = new Date(today - 86400000);
@@ -281,19 +563,19 @@ const app = {
         let html = '';
         const renderGroup = (label, items) => {
             if (!items.length) return '';
-            let h = `<div class="sidebar-group"><div class="sidebar-group-label">${label}</div>`;
+            let h = `<div class="nav-group"><div class="nav-group-label">${label}</div>`;
             for (const c of items) {
                 const tagsHtml = (c.tags || []).map(t =>
-                    `<span class="sidebar-tag" onclick="event.stopPropagation();app.filterByTag('${app.escapeHtml(t.name)}')">${app.escapeHtml(t.name)}</span>`
+                    `<span class="nav-tag" onclick="event.stopPropagation();app.filterByTag('${app.escapeHtml(t.name)}')">${app.escapeHtml(t.name)}</span>`
                 ).join('');
-                h += `<div class="sidebar-item ${c.id === this.currentConvId ? 'active' : ''}"
+                h += `<div class="nav-item ${c.id === this.currentConvId ? 'active' : ''}"
                      onclick="app.loadConversation(${c.id})">
                     <div class="item-content">
                         <span class="item-title">${this.escapeHtml(c.title)}</span>
                         ${c.preview ? `<span class="item-preview">${this.escapeHtml(c.preview)}</span>` : ''}
                         ${tagsHtml ? `<div class="item-tags">${tagsHtml}</div>` : ''}
                     </div>
-                    <button class="item-delete" onclick="event.stopPropagation();app.deleteConversation(${c.id})">✕</button>
+                    <button class="item-delete" onclick="event.stopPropagation();app.deleteConversation(${c.id})">&#10005;</button>
                 </div>`;
             }
             h += '</div>';
@@ -306,15 +588,18 @@ const app = {
         html += renderGroup('Older', groups.older);
 
         if (!html) {
-            html = '<div style="padding:24px;text-align:center;color:var(--text-muted);font-size:13px">No conversations</div>';
+            html = '<div style="padding:20px;text-align:center;color:var(--t4);font-size:12px">No threads yet</div>';
         }
 
         list.innerHTML = html;
     },
 
+    // Alias for legacy compat
+    renderSidebar() { this.renderThreadList(); },
+
     filterSidebar(value) {
         this.sidebarFilter = value;
-        this.renderSidebar();
+        this.renderThreadList();
     },
 
     filterByTag(tagName) {
@@ -323,52 +608,46 @@ const app = {
         } else {
             this.activeTagFilter = tagName;
         }
-        this.renderSidebar();
+        this.renderThreadList();
     },
 
     async loadConversation(id) {
         this.currentConvId = id;
-        this.renderSidebar();
+        this.renderThreadList();
 
         const resp = await fetch(`/api/conversations/${id}`);
         const data = await resp.json();
 
-        // Set mode
-        document.getElementById('mode-select').value = data.mode || 'concise';
-
         // Render messages
-        const chatArea = document.getElementById('chat-area');
-        chatArea.innerHTML = '';
+        const surface = document.getElementById('surface');
+        surface.innerHTML = '';
 
         for (const msg of data.messages) {
             if (msg.role === 'user') {
-                chatArea.appendChild(this.createUserBubble(msg.content, msg.id));
+                surface.appendChild(this.createUserBubble(msg.content, msg.id));
             } else {
                 if (msg.sources && msg.sources.length) {
-                    chatArea.appendChild(this.createSourcesBar(msg.sources));
+                    surface.appendChild(this.createSourcesBar(msg.sources));
                 }
-                chatArea.appendChild(this.createAssistantBubble(msg.content, msg.id));
+                surface.appendChild(this.createAssistantBubble(msg.content, msg.id));
                 if (msg.follow_ups && msg.follow_ups.length) {
-                    chatArea.appendChild(this.createFollowUps(msg.follow_ups));
+                    surface.appendChild(this.createFollowUps(msg.follow_ups));
                 }
             }
         }
 
-        // Show conversation header with tag button
         this.renderConversationHeader(data);
-
         this.hideWelcome();
         this.scrollToBottom();
     },
 
     renderConversationHeader(data) {
-        // Remove existing header
         const existing = document.getElementById('conv-header');
         if (existing) existing.remove();
 
         const tags = data.tags || [];
         const tagsHtml = tags.map(t =>
-            `<span class="conv-tag">${this.escapeHtml(t.name)} <span class="conv-tag-remove" onclick="app.removeTagFromConv('${this.escapeHtml(t.name)}')">✕</span></span>`
+            `<span class="conv-tag">${this.escapeHtml(t.name)} <span class="conv-tag-remove" onclick="app.removeTagFromConv('${this.escapeHtml(t.name)}')">&#10005;</span></span>`
         ).join('');
 
         const header = document.createElement('div');
@@ -376,20 +655,18 @@ const app = {
         header.className = 'conv-header';
         header.innerHTML = `
             <div class="conv-tags">${tagsHtml}</div>
-            <button class="icon-btn tag-add-btn" onclick="app.showTagInput()" title="Add tag">🏷️ +</button>
+            <button class="icon-btn tag-add-btn" onclick="app.showTagInput()" title="Add tag">&#127991; +</button>
         `;
-        const chatArea = document.getElementById('chat-area');
-        chatArea.insertBefore(header, chatArea.firstChild);
+        const surface = document.getElementById('surface');
+        surface.insertBefore(header, surface.firstChild);
     },
 
     async showTagInput() {
         if (!this.currentConvId) return;
 
-        // Remove existing input
         const existing = document.getElementById('tag-input-popup');
         if (existing) { existing.remove(); return; }
 
-        // Get existing tags for autocomplete
         const allTags = await graph.listTags();
         const tagNames = allTags.map(t => t.name);
 
@@ -419,7 +696,6 @@ const app = {
         const tagName = input.value.trim();
         await graph.addTag(this.currentConvId, tagName);
         document.getElementById('tag-input-popup')?.remove();
-        // Reload to refresh tags
         this.loadConversation(this.currentConvId);
         this.loadConversations();
     },
@@ -433,9 +709,12 @@ const app = {
 
     async newChat() {
         this.currentConvId = null;
-        document.getElementById('chat-area').innerHTML = '';
+        const surface = document.getElementById('surface');
+        surface.innerHTML = '';
         this.showWelcome();
-        this.renderSidebar();
+        this.renderThreadList();
+        this.clearTrace();
+        this.hidePipeline();
         document.getElementById('chat-input').focus();
     },
 
@@ -463,7 +742,6 @@ const app = {
                 this.handleSlashCommand(query);
                 return;
             }
-            // Check partial matches (mode commands etc)
             if (cmd === '/mode') {
                 input.value = '';
                 input.style.height = 'auto';
@@ -478,18 +756,18 @@ const app = {
         this.hideWelcome();
         this.hideSlashAutocomplete();
 
-        const chatArea = document.getElementById('chat-area');
-        chatArea.appendChild(this.createUserBubble(query));
+        const surface = document.getElementById('surface');
+        surface.appendChild(this.createUserBubble(query));
 
-        const mode = document.getElementById('mode-select').value;
-        const searchEnabled = document.getElementById('search-toggle').checked;
+        // Determine mode from pills
+        const mode = this.activeMode === 'research' ? 'detailed' : this.activeMode;
 
-        if (this.agentMode) {
+        if (this.agentMode || this.activeMode === 'detailed') {
             await this.runAgent(query, mode);
-        } else if (this.proSearch) {
+        } else if (this.proSearch || this.activeMode === 'research') {
             await this.runResearch(query, mode);
         } else {
-            await this.streamChat(query, mode, searchEnabled);
+            await this.streamChat(query, mode, true);
         }
     },
 
@@ -497,19 +775,17 @@ const app = {
         this.streaming = true;
         this.setSendDisabled(true);
 
-        const chatArea = document.getElementById('chat-area');
+        const surface = document.getElementById('surface');
 
-        // Source card placeholder
         const sourcesBar = document.createElement('div');
         sourcesBar.className = 'sources-bar';
         sourcesBar.id = 'current-sources';
-        chatArea.appendChild(sourcesBar);
+        surface.appendChild(sourcesBar);
 
-        // Assistant bubble
         const bubble = document.createElement('div');
         bubble.className = 'message message-assistant';
-        bubble.innerHTML = '<div class="message-bubble streaming-cursor" id="current-response"></div>';
-        chatArea.appendChild(bubble);
+        bubble.innerHTML = '<div class="message-bubble streaming-cursor" id="current-response"><div class="thinking-indicator" id="thinking-indicator"><img src="/static/icon.svg" class="thinking-icon" alt=""> Thinking...</div></div>';
+        surface.appendChild(bubble);
 
         this.scrollToBottom();
 
@@ -550,10 +826,7 @@ const app = {
                         this.currentConvId = data.conversation_id;
                         sources = data.sources || [];
                         followUps = data.follow_ups || [];
-
-                        if (data.title) {
-                            this.loadConversations();
-                        }
+                        if (data.title) this.loadConversations();
                     } else if (data.type === 'error') {
                         fullText += `\n\n**Error:** ${data.error}`;
                         document.getElementById('current-response').innerHTML = this.renderMarkdown(fullText);
@@ -562,22 +835,19 @@ const app = {
             }
         }
 
-        // Finalize
         const respEl = document.getElementById('current-response');
-        if (respEl) {
-            respEl.classList.remove('streaming-cursor');
-            respEl.id = '';
-        }
+        if (respEl) { respEl.classList.remove('streaming-cursor'); respEl.id = ''; }
 
         if (sources.length) {
             sourcesBar.innerHTML = sources.map(s => this.createSourceCard(s)).join('');
             sourcesBar.id = '';
-        } else {
-            sourcesBar.remove();
-        }
+            // Update source count in ambient bar
+            const srcEl = document.getElementById('stat-sources');
+            if (srcEl) srcEl.textContent = (parseInt(srcEl.textContent) || 0) + sources.length;
+        } else { sourcesBar.remove(); }
 
         if (followUps.length) {
-            chatArea.appendChild(this.createFollowUps(followUps));
+            surface.appendChild(this.createFollowUps(followUps));
         }
 
         this.streaming = false;
@@ -595,8 +865,8 @@ const app = {
             <div class="message-bubble">
                 <div class="message-text">${this.escapeHtml(text)}</div>
                 <div class="message-actions">
-                    <button class="msg-action" onclick="app.copyMessage(this)" title="Copy">📋</button>
-                    <button class="msg-action" onclick="app.editMessage(this)" title="Edit & Resend">✏️</button>
+                    <button class="msg-action" onclick="app.copyMessage(this)" title="Copy">&#128203;</button>
+                    <button class="msg-action" onclick="app.editMessage(this)" title="Edit">&#9998;</button>
                 </div>
             </div>`;
         return div;
@@ -610,8 +880,8 @@ const app = {
             <div class="message-bubble">
                 <div class="message-text">${this.renderMarkdown(html)}</div>
                 <div class="message-actions">
-                    <button class="msg-action" onclick="app.copyMessage(this)" title="Copy">📋</button>
-                    <button class="msg-action" onclick="app.regenerateMessage(this)" title="Regenerate">🔄</button>
+                    <button class="msg-action" onclick="app.copyMessage(this)" title="Copy">&#128203;</button>
+                    <button class="msg-action" onclick="app.regenerateMessage(this)" title="Regenerate">&#128260;</button>
                 </div>
             </div>`;
         return div;
@@ -621,25 +891,21 @@ const app = {
         const bubble = btn.closest('.message-bubble');
         const text = bubble.querySelector('.message-text').innerText;
         navigator.clipboard.writeText(text);
-        btn.textContent = '✓';
-        setTimeout(() => btn.textContent = '📋', 1500);
+        btn.textContent = '\u2713';
+        setTimeout(() => btn.innerHTML = '&#128203;', 1500);
     },
 
     editMessage(btn) {
         const msgDiv = btn.closest('.message');
         const textEl = msgDiv.querySelector('.message-text');
-        const original = textEl.innerText;
-
-        // Replace text with editable area
         textEl.contentEditable = true;
         textEl.focus();
         textEl.classList.add('editing');
 
-        // Add save/cancel buttons
         const actions = msgDiv.querySelector('.message-actions');
         actions.innerHTML = `
-            <button class="msg-action save" onclick="app.saveEdit(this, true)" title="Send">✓</button>
-            <button class="msg-action cancel" onclick="app.saveEdit(this, false)" title="Cancel">✕</button>
+            <button class="msg-action save" onclick="app.saveEdit(this, true)" title="Send">&#10003;</button>
+            <button class="msg-action cancel" onclick="app.saveEdit(this, false)" title="Cancel">&#10005;</button>
         `;
         actions.style.opacity = '1';
     },
@@ -653,21 +919,19 @@ const app = {
         const actions = msgDiv.querySelector('.message-actions');
         const isUser = msgDiv.classList.contains('message-user');
         actions.innerHTML = isUser
-            ? '<button class="msg-action" onclick="app.copyMessage(this)" title="Copy">📋</button><button class="msg-action" onclick="app.editMessage(this)" title="Edit & Resend">✏️</button>'
-            : '<button class="msg-action" onclick="app.copyMessage(this)" title="Copy">📋</button><button class="msg-action" onclick="app.regenerateMessage(this)" title="Regenerate">🔄</button>';
+            ? '<button class="msg-action" onclick="app.copyMessage(this)" title="Copy">&#128203;</button><button class="msg-action" onclick="app.editMessage(this)" title="Edit">&#9998;</button>'
+            : '<button class="msg-action" onclick="app.copyMessage(this)" title="Copy">&#128203;</button><button class="msg-action" onclick="app.regenerateMessage(this)" title="Regenerate">&#128260;</button>';
 
         if (submit) {
             const newQuery = textEl.innerText.trim();
             if (newQuery) {
-                // Remove this message and all after it
-                const chatArea = document.getElementById('chat-area');
+                const surface = document.getElementById('surface');
                 let next = msgDiv.nextElementSibling;
                 while (next) {
                     const toRemove = next;
                     next = next.nextElementSibling;
                     toRemove.remove();
                 }
-                // Resubmit
                 const input = document.getElementById('chat-input');
                 input.value = newQuery;
                 this.send();
@@ -677,16 +941,11 @@ const app = {
 
     regenerateMessage(btn) {
         const msgDiv = btn.closest('.message');
-        const chatArea = document.getElementById('chat-area');
-
-        // Find previous user message
         let prev = msgDiv.previousElementSibling;
         while (prev) {
             if (prev.classList.contains('message-user')) {
                 const text = prev.querySelector('.message-text').innerText;
-                // Remove this assistant message
                 msgDiv.remove();
-                // Resubmit with the user message
                 const input = document.getElementById('chat-input');
                 input.value = text;
                 this.send();
@@ -709,7 +968,7 @@ const app = {
         const scoreBar = s.score ? `<div class="source-score" title="Quality: ${s.score}"><div class="source-score-fill" style="width:${s.score * 100}%"></div></div>` : '';
         return `<div class="source-card" onclick="window.open('${this.escapeHtml(s.url)}', '_blank')">
             <div><span class="source-index">[${s.index}]</span> <span class="source-title">${this.escapeHtml(s.title)}</span></div>
-            <div class="source-domain">${this.escapeHtml(s.domain)}${s.authority ? ` · ${(s.authority * 100).toFixed(0)}% authority` : ''}</div>
+            <div class="source-domain">${this.escapeHtml(s.domain)}${s.authority ? ` &middot; ${(s.authority * 100).toFixed(0)}%` : ''}</div>
             ${scoreBar}
         </div>`;
     },
@@ -734,11 +993,23 @@ const app = {
     },
 
     showWelcome() {
-        const chatArea = document.getElementById('chat-area');
-        chatArea.innerHTML = `<div class="welcome" id="welcome">
+        const surface = document.getElementById('surface');
+        surface.innerHTML = `<div class="welcome" id="welcome">
+            <svg viewBox="0 0 80 80" fill="none" style="width:64px;height:64px;opacity:0.8">
+                <circle cx="40" cy="40" r="36" fill="#e8a020"/>
+                <path d="M30 55l10-30h.2l10 30" stroke="#07070a" stroke-width="5" fill="none" stroke-linecap="round" stroke-linejoin="round"/>
+                <line x1="33" y1="47" x2="52" y2="47" stroke="#07070a" stroke-width="4.5" stroke-linecap="round"/>
+                <circle cx="59" cy="59" r="11" stroke="#07070a" stroke-width="4" fill="none"/>
+                <line x1="67" y1="67" x2="76" y2="76" stroke="#07070a" stroke-width="4" stroke-linecap="round"/>
+            </svg>
             <h2>What do you want to know?</h2>
+            <span class="brand-tagline">The Search Engine of the Future</span>
             <p>Search the web, analyze pages, control Chrome, and get AI-powered answers with inline citations.</p>
-            <p style="font-size:13px;color:var(--text-muted)">Type <code>/</code> for slash commands</p>
+            <div class="welcome-commands">
+                <button class="welcome-cmd" onclick="app.fillInput('/research latest AI breakthroughs')">/research AI</button>
+                <button class="welcome-cmd" onclick="app.fillInput('/agent summarize the top news')">/agent news</button>
+                <button class="welcome-cmd" onclick="app.fillInput('What is quantum computing?')">Ask anything</button>
+            </div>
         </div>`;
     },
 
@@ -747,8 +1018,8 @@ const app = {
     },
 
     scrollToBottom() {
-        const chatArea = document.getElementById('chat-area');
-        chatArea.scrollTop = chatArea.scrollHeight;
+        const surface = document.getElementById('surface');
+        if (surface) surface.scrollTop = surface.scrollHeight;
     },
 
     setMode(mode) {
@@ -763,39 +1034,45 @@ const app = {
 
     toggleProSearch() {
         this.proSearch = !this.proSearch;
+        if (this.proSearch) this.agentMode = false;
         const btn = document.getElementById('pro-search-btn');
         const label = document.getElementById('pro-search-label');
-        btn.style.background = this.proSearch ? 'var(--accent-dim)' : '';
+        const agentLabel = document.getElementById('agent-label');
+        const agentBtn = document.getElementById('agent-btn');
+        btn.style.background = this.proSearch ? 'var(--gold-dim)' : '';
         label.style.display = this.proSearch ? '' : 'none';
-        if (this.proSearch && this.agentMode) this.toggleAgent();
+        agentLabel.style.display = 'none';
+        agentBtn.style.background = '';
     },
 
     toggleAgent() {
         this.agentMode = !this.agentMode;
+        if (this.agentMode) this.proSearch = false;
         const btn = document.getElementById('agent-btn');
         const label = document.getElementById('agent-label');
-        btn.style.background = this.agentMode ? 'rgba(34,197,94,0.15)' : '';
+        const proLabel = document.getElementById('pro-search-label');
+        const proBtn = document.getElementById('pro-search-btn');
+        btn.style.background = this.agentMode ? 'var(--gold-dim)' : '';
         label.style.display = this.agentMode ? '' : 'none';
-        if (this.agentMode && this.proSearch) this.toggleProSearch();
+        proLabel.style.display = 'none';
+        proBtn.style.background = '';
     },
 
     async deleteConversation(id) {
         await fetch(`/api/conversations/${id}`, { method: 'DELETE' });
-        if (this.currentConvId === id) {
-            this.newChat();
-        }
+        if (this.currentConvId === id) this.newChat();
         this.loadConversations();
     },
 
     switchTab(tab) {
-        document.querySelectorAll('.sidebar-nav button').forEach(b => b.classList.remove('active'));
-        document.querySelector(`.sidebar-nav button[data-tab="${tab}"]`).classList.add('active');
+        document.querySelectorAll('.nav-tab').forEach(b => b.classList.remove('active'));
+        document.querySelector(`.nav-tab[data-tab="${tab}"]`).classList.add('active');
 
-        const list = document.getElementById('sidebar-list');
+        const list = document.getElementById('nav-list');
         if (tab === 'spaces') {
             spaces.load(list);
         } else {
-            this.renderSidebar();
+            this.renderThreadList();
         }
     },
 
@@ -826,43 +1103,44 @@ const app = {
         if (query) formData.append('query', query);
 
         this.hideWelcome();
-        const chatArea = document.getElementById('chat-area');
-        chatArea.appendChild(this.createUserBubble(`Uploaded: ${file.name}`));
+        const surface = document.getElementById('surface');
+        surface.appendChild(this.createUserBubble(`Uploaded: ${file.name}`));
 
         const resp = await fetch('/api/files/upload', { method: 'POST', body: formData });
         const data = await resp.json();
 
         if (data.analysis) {
-            chatArea.appendChild(this.createAssistantBubble(data.analysis));
+            surface.appendChild(this.createAssistantBubble(data.analysis));
         }
         this.scrollToBottom();
         input.value = '';
     },
 
     // ─── Agent mode ───
+
     async runAgent(query, mode) {
         this.streaming = true;
         this.setSendDisabled(true);
 
-        const chatArea = document.getElementById('chat-area');
+        const surface = document.getElementById('surface');
 
-        // Agent steps log
-        const stepsDiv = document.createElement('div');
-        stepsDiv.className = 'research-progress';
-        stepsDiv.id = 'agent-steps';
-        chatArea.appendChild(stepsDiv);
+        // Show pipeline
+        this.updatePipeline('plan');
+
+        // Steps go to trace panel
+        this.clearTrace();
 
         // Response bubble
         const bubble = document.createElement('div');
         bubble.className = 'message message-assistant';
         bubble.innerHTML = '<div class="message-bubble streaming-cursor" id="current-response"></div>';
-        chatArea.appendChild(bubble);
+        surface.appendChild(bubble);
 
         // Source bar
         const sourcesBar = document.createElement('div');
         sourcesBar.className = 'sources-bar';
         sourcesBar.id = 'current-sources';
-        chatArea.appendChild(sourcesBar);
+        surface.appendChild(sourcesBar);
 
         this.scrollToBottom();
 
@@ -877,6 +1155,18 @@ const app = {
         let fullText = '';
         let sources = [];
 
+        // Map tool calls to pipeline stages
+        const toolToStage = {
+            search: 'search',
+            browse: 'extract',
+            extract: 'extract',
+            click: 'extract',
+            type_text: 'extract',
+            screenshot: 'extract',
+            youtube_play: 'extract',
+        };
+        let currentStage = 'plan';
+
         while (true) {
             const { done, value } = await reader.read();
             if (done) break;
@@ -889,59 +1179,51 @@ const app = {
                     const data = JSON.parse(line.slice(6));
 
                     if (data.type === 'agent_thinking') {
-                        // Show thinking indicator
-                    } else if (data.type === 'plan') {
-                        const step = document.createElement('div');
-                        step.className = 'progress-step active';
-                        step.innerHTML = `<div class="step-icon">📋</div><span><strong>Plan:</strong> ${this.escapeHtml(data.message || '')}</span>`;
-                        stepsDiv.appendChild(step);
-                        this.scrollToBottom();
-                    } else if (data.type === 'reflection') {
-                        const step = document.createElement('div');
-                        step.className = 'progress-step done';
-                        step.innerHTML = `<div class="step-icon">🪞</div><span style="color:var(--text-muted)"><strong>Reflection:</strong> ${this.escapeHtml(data.message || '')}</span>`;
-                        stepsDiv.appendChild(step);
-                        this.scrollToBottom();
-                    } else if (data.type === 'tool_call') {
-                        const toolIcons = { search: '🔍', browse: '🌐', extract: '📋', click: '👆', type_text: '⌨️', screenshot: '📸' };
-                        const icon = toolIcons[data.tool] || '🔧';
-                        const argsStr = JSON.stringify(data.args).slice(0, 100);
-                        const step = document.createElement('div');
-                        step.className = 'progress-step active';
-                        step.innerHTML = `<div class="step-icon">${icon}</div><span><strong>${data.tool}</strong>(${argsStr})</span>`;
-                        stepsDiv.appendChild(step);
-                        this.scrollToBottom();
-                    } else if (data.type === 'tool_result') {
-                        const steps = stepsDiv.querySelectorAll('.progress-step');
-                        const last = steps[steps.length - 1];
-                        if (last) {
-                            last.classList.remove('active');
-                            last.classList.add('done');
-                            last.querySelector('.step-icon').textContent = '✓';
+                        const existing = document.getElementById('thinking-indicator');
+                        if (!existing) {
+                            const surface = document.getElementById('surface');
+                            const think = document.createElement('div');
+                            think.className = 'thinking-indicator';
+                            think.id = 'thinking-indicator';
+                            think.innerHTML = '<img src="/static/icon.svg" class="thinking-icon" alt=""> Thinking...';
+                            surface.appendChild(think);
+                            this.scrollToBottom();
                         }
-                        const resultStep = document.createElement('div');
-                        resultStep.className = 'progress-step done';
-                        const preview = data.summary.slice(0, 150).replace(/\n/g, ' ');
-                        resultStep.innerHTML = `<div class="step-icon" style="background:var(--bg-tertiary);color:var(--text-muted)">→</div><span style="color:var(--text-muted);font-size:12px">${this.escapeHtml(preview)}...</span>`;
-                        stepsDiv.appendChild(resultStep);
-                        this.scrollToBottom();
+                    } else if (data.type === 'plan') {
+                        this.appendTraceLog(data);
+                        this.updatePipeline('plan');
+                    } else if (data.type === 'reflection') {
+                        this.appendTraceLog(data);
+                        this.updatePipeline('analyze');
+                    } else if (data.type === 'tool_call') {
+                        this.appendTraceLog(data);
+                        const stage = toolToStage[data.tool] || 'extract';
+                        if (stage !== currentStage) {
+                            currentStage = stage;
+                            this.updatePipeline(stage);
+                        }
+                    } else if (data.type === 'tool_result') {
+                        this.appendTraceLog(data);
                     } else if (data.type === 'token') {
+                        const thinkEl = document.getElementById('thinking-indicator');
+                        if (thinkEl) thinkEl.remove();
                         fullText += data.content;
                         const responseEl = document.getElementById('current-response');
                         if (responseEl) responseEl.innerHTML = this.renderMarkdown(fullText);
                         this.scrollToBottom();
+                        this.updatePipeline('synth');
                     } else if (data.type === 'done') {
                         this.currentConvId = data.conversation_id;
                         sources = data.sources || [];
                         this.loadConversations();
                     } else if (data.type === 'error') {
                         fullText += `\n\n**Error:** ${data.error}`;
+                        this.appendTraceLog(data);
                     }
                 } catch (e) {}
             }
         }
 
-        // Finalize
         const responseEl = document.getElementById('current-response');
         if (responseEl) { responseEl.classList.remove('streaming-cursor'); responseEl.id = ''; }
 
@@ -950,49 +1232,31 @@ const app = {
             sourcesBar.id = '';
         } else { sourcesBar.remove(); }
 
-        stepsDiv.id = '';
+        this.hidePipeline();
         this.streaming = false;
         this.setSendDisabled(false);
         this.scrollToBottom();
     },
 
-    // Simple markdown-ish rendering
+    // ─── Markdown ───
+
     renderMarkdown(text) {
         let html = this.escapeHtml(text);
 
-        // Code blocks
         html = html.replace(/```(\w*)\n([\s\S]*?)```/g, '<pre><code>$2</code></pre>');
         html = html.replace(/```([\s\S]*?)```/g, '<pre><code>$1</code></pre>');
-
-        // Inline code
         html = html.replace(/`([^`]+)`/g, '<code>$1</code>');
-
-        // Bold
         html = html.replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>');
-
-        // Italic
         html = html.replace(/\*(.+?)\*/g, '<em>$1</em>');
-
-        // Citation links
         html = html.replace(/\[(\d+)\]/g, '<sup><a class="cite-link" href="#source-$1">[$1]</a></sup>');
-
-        // Links
-        html = html.replace(/\[([^\]]+)\]\(([^)]+)\)/g, '<a href="$2" target="_blank" style="color:var(--accent)">$1</a>');
-
-        // Headers
-        html = html.replace(/^### (.+)$/gm, '<h4 style="margin:12px 0 8px;font-size:15px;font-weight:600">$1</h4>');
-        html = html.replace(/^## (.+)$/gm, '<h3 style="margin:16px 0 8px;font-size:17px;font-weight:600">$1</h3>');
-
-        // Lists
+        html = html.replace(/\[([^\]]+)\]\(([^)]+)\)/g, '<a href="$2" target="_blank" style="color:var(--gold)">$1</a>');
+        html = html.replace(/^### (.+)$/gm, '<h4 style="margin:10px 0 6px;font-size:14px;font-weight:600">$1</h4>');
+        html = html.replace(/^## (.+)$/gm, '<h3 style="margin:14px 0 6px;font-size:16px;font-weight:600">$1</h3>');
         html = html.replace(/^- (.+)$/gm, '<li>$1</li>');
         html = html.replace(/(<li>.*<\/li>\n?)+/g, '<ul>$&</ul>');
-
-        // Paragraphs (double newline)
         html = html.replace(/\n\n/g, '</p><p>');
         html = '<p>' + html + '</p>';
         html = html.replace(/<p><\/p>/g, '');
-
-        // Single newlines within paragraphs
         html = html.replace(/\n/g, '<br>');
 
         return html;

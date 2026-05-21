@@ -17,6 +17,9 @@ from config import settings
 
 logger = logging.getLogger(__name__)
 
+# Macro recorder hook — set by core.macro when recording is active
+_recorder = None
+
 # Stealth JS injected on every page load via Page.addScriptToEvaluateOnNewDocument
 STEALTH_JS = """
 // navigator.webdriver = undefined (not false — undefined is more natural)
@@ -136,6 +139,8 @@ class CDPBridge:
 
     async def navigate(self, url: str) -> dict:
         """Navigate — resets stealth flag so it gets re-injected."""
+        if _recorder and _recorder.recording:
+            _recorder.record_step("navigate", {"url": url})
         self._stealth_injected = False
         return await self.send_command("Page.navigate", {"url": url})
 
@@ -160,6 +165,8 @@ class CDPBridge:
         return result.get("nodeId", 0)
 
     async def evaluate(self, expression: str) -> Any:
+        if _recorder and _recorder.recording:
+            _recorder.record_step("evaluate", {"expression": expression})
         result = await self.send_command(
             "Runtime.evaluate",
             {"expression": expression, "returnByValue": True},
@@ -168,6 +175,8 @@ class CDPBridge:
 
     async def click(self, selector: str) -> dict:
         """Human-like click with slight random offset and movement."""
+        if _recorder and _recorder.recording:
+            _recorder.record_step("click", {"selector": selector})
         node_id = await self.query_selector(selector)
         if not node_id:
             return {"error": "Element not found"}
@@ -204,6 +213,8 @@ class CDPBridge:
 
     async def type_text(self, selector: str, text: str) -> dict:
         """Human-like typing with random delays between keystrokes."""
+        if _recorder and _recorder.recording:
+            _recorder.record_step("type", {"selector": selector, "text": text})
         node_id = await self.query_selector(selector)
         if node_id:
             await self.send_command("DOM.focus", {"nodeId": node_id})
@@ -225,6 +236,8 @@ class CDPBridge:
 
     async def scroll(self, x: int = 0, y: int = 300) -> dict:
         """Human-like scroll."""
+        if _recorder and _recorder.recording:
+            _recorder.record_step("scroll", {"x": x, "y": y})
         await self.send_command("Input.dispatchMouseEvent", {
             "type": "mouseWheel",
             "x": 0, "y": 0,

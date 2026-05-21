@@ -1,0 +1,18 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32" fill="none">
+  <!-- Cat head -->
+  <path d="M8 18a8 8 0 0 1 16 0 8 8 0 0 1-16 0z" fill="#0d0d12"/>
+  <!-- Ears -->
+  <path d="M9 15L7 6l5 8zM23 15l2-9-5 8z" fill="#0d0d12"/>
+  <!-- Goggle strap -->
+  <rect x="8" y="15.5" width="16" height="2" rx="1" fill="#3b82f6"/>
+  <!-- Goggles -->
+  <circle cx="13" cy="18.5" r="3" fill="#1e3a5f" stroke="#3b82f6" stroke-width="1"/>
+  <circle cx="13" cy="18.5" r="1.2" fill="#60a5fa"/>
+  <circle cx="19" cy="18.5" r="3" fill="#1e3a5f" stroke="#3b82f6" stroke-width="1"/>
+  <circle cx="19" cy="18.5" r="1.2" fill="#60a5fa"/>
+  <!-- Nose -->
+  <ellipse cx="16" cy="22" rx="1.2" ry="0.8" fill="#e8a020"/>
+  <!-- Magnifier -->
+  <circle cx="25.5" cy="25" r="3" stroke="#e8a020" stroke-width="1.2" fill="none"/>
+  <line x1="27.6" y1="27.1" x2="30" y2="29.5" stroke="#e8a020" stroke-width="1.2" stroke-linecap="round"/>
+</svg>

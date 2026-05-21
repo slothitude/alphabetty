@@ -1,0 +1,36 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" fill="none">
+  <!-- Cat body -->
+  <ellipse cx="28" cy="44" rx="14" ry="12" fill="#0d0d12"/>
+  <!-- Cat head -->
+  <circle cx="28" cy="24" r="11" fill="#0d0d12"/>
+  <!-- Left ear -->
+  <path d="M19 18L16 5l7 11z" fill="#0d0d12"/>
+  <!-- Right ear -->
+  <path d="M37 18l3-13-7 11z" fill="#0d0d12"/>
+  <!-- Inner ears -->
+  <path d="M19 17l-2-8 5 8z" fill="#1a1a2e"/>
+  <path d="M37 17l2-8-5 8z" fill="#1a1a2e"/>
+  <!-- Goggle strap -->
+  <rect x="15" y="21" width="26" height="2.5" rx="1.2" fill="#2563eb"/>
+  <!-- Left goggle -->
+  <circle cx="23" cy="25" r="5" fill="#1e3a5f" stroke="#3b82f6" stroke-width="1.5"/>
+  <circle cx="23" cy="25" r="2.5" fill="#60a5fa"/>
+  <circle cx="22" cy="24" r="1" fill="#93c5fd" opacity="0.8"/>
+  <!-- Right goggle -->
+  <circle cx="33" cy="25" r="5" fill="#1e3a5f" stroke="#3b82f6" stroke-width="1.5"/>
+  <circle cx="33" cy="25" r="2.5" fill="#60a5fa"/>
+  <circle cx="32" cy="24" r="1" fill="#93c5fd" opacity="0.8"/>
+  <!-- Nose -->
+  <ellipse cx="28" cy="30" rx="1.5" ry="1" fill="#e8a020"/>
+  <!-- Mouth -->
+  <path d="M26 31.5q2 1.5 4 0" stroke="#555" stroke-width="0.7" fill="none"/>
+  <!-- Magnifying glass -->
+  <line x1="40" y1="38" x2="48" y2="30" stroke="#555" stroke-width="2" stroke-linecap="round"/>
+  <circle cx="50" cy="28" r="5" stroke="#e8a020" stroke-width="2" fill="none"/>
+  <circle cx="50" cy="28" r="3" fill="rgba(232,160,32,0.1)"/>
+  <!-- Paw -->
+  <ellipse cx="20" cy="50" rx="4" ry="2" fill="#0d0d12"/>
+  <!-- Tail -->
+  <path d="M14 46Q8 40 10 33" stroke="#0d0d12" stroke-width="3.5" fill="none" stroke-linecap="round"/>
+  <rect x="10.5" y="33" width="4" height="2" rx="1" fill="#3b82f6" transform="rotate(-20 12.5 34)"/>
+</svg>

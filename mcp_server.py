@@ -337,6 +337,89 @@ async def cdp_set_cookie(name: str, value: str, domain: str, path: str = "/") ->
     return json.dumps(await _post("/api/cdp/cookies", {"name": name, "value": value, "domain": domain, "path": path}))
 
 
+# ─── Macro Recording ───
+
+@mcp.tool()
+async def macro_record_start(name: str, url: str = "") -> str:
+    """Start recording browser actions (navigate, click, type, scroll) as a reusable macro.
+
+    Args:
+        name: Name for the macro
+        url: Starting URL (optional)
+    """
+    return json.dumps(await _post("/api/cdp/macro/record/start", {"name": name, "url": url}))
+
+
+@mcp.tool()
+async def macro_record_stop() -> str:
+    """Stop macro recording and save it. Returns the saved macro with all captured steps."""
+    return json.dumps(await _post("/api/cdp/macro/record/stop"))
+
+
+@mcp.tool()
+async def macro_record_browser(name: str, url: str = "") -> str:
+    """Start browser-level recording: injects JS event listeners to capture real user interactions.
+
+    Args:
+        name: Name for the macro
+        url: Starting URL (optional)
+    """
+    return json.dumps(await _post("/api/cdp/macro/browser/start", {"name": name, "url": url}))
+
+
+@mcp.tool()
+async def macro_record_stop_browser() -> str:
+    """Stop browser-level recording, collect captured events, and save as macro."""
+    return json.dumps(await _post("/api/cdp/macro/browser/stop"))
+
+
+@mcp.tool()
+async def macro_play(macro_id: int) -> str:
+    """Replay a saved macro, executing all recorded steps with original timing.
+
+    Args:
+        macro_id: ID of the macro to replay
+    """
+    return json.dumps(await _post("/api/cdp/macro/play", {"macro_id": macro_id}))
+
+
+@mcp.tool()
+async def macro_list() -> str:
+    """List all saved macros with step counts and durations."""
+    return json.dumps(await _get("/api/cdp/macro/list"))
+
+
+# ─── Screen Recording ───
+
+@mcp.tool()
+async def screen_record_start(fps: int = 10, quality: int = 80) -> str:
+    """Start recording the browser screen as a video via CDP screencast.
+
+    Args:
+        fps: Frames per second (1-30)
+        quality: JPEG quality (10-100)
+    """
+    return json.dumps(await _post("/api/cdp/screen/record/start", {"fps": fps, "quality": quality}))
+
+
+@mcp.tool()
+async def screen_record_stop() -> str:
+    """Stop screen recording and return compiled video as base64."""
+    return json.dumps(await _post("/api/cdp/screen/record/stop"))
+
+
+# ─── YouTube ───
+
+@mcp.tool()
+async def youtube_play(query: str) -> str:
+    """Search YouTube and navigate Chrome to the first matching video.
+
+    Args:
+        query: YouTube search query
+    """
+    return json.dumps(await _post("/api/cdp/youtube", {"query": query}))
+
+
 # ─── Knowledge Graph ───
 
 @mcp.tool()

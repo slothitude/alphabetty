@@ -183,6 +183,20 @@ AGENT_TOOLS = [
             },
         },
     },
+    {
+        "type": "function",
+        "function": {
+            "name": "youtube_play",
+            "description": "Play a YouTube video by searching for it. Navigates Chrome to YouTube, finds the best match, and plays it. Returns the video URL and ID. Use this whenever the user wants to watch or play a YouTube video.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "query": {"type": "string", "description": "YouTube search query (song name, artist, etc.)"},
+                },
+                "required": ["query"],
+            },
+        },
+    },
 ]
 
 AGENT_SYSTEM = """You are Alphabetty, an autonomous AI research agent with web browsing capabilities.
@@ -194,6 +208,7 @@ You have these tools available:
 - **click(selector)** — Click an element on the current page
 - **type_text(selector, text)** — Type into an input field
 - **screenshot()** — Take a screenshot to see the current page
+- **youtube_play(query)** — Search YouTube and play a video in Chrome. Returns video URL and ID.
 
 ## Agent Strategy
 1. Start by searching for the user's query

@@ -586,6 +586,113 @@ TOOL_DEFINITIONS = [
             },
         },
     },
+    # Macro Recording
+    {
+        "type": "function",
+        "function": {
+            "name": "macro_record_start",
+            "description": "Start recording browser actions (navigate, click, type, scroll) as a reusable macro.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "name": {"type": "string", "description": "Name for the macro"},
+                    "url": {"type": "string", "description": "Starting URL (optional)", "default": ""},
+                },
+                "required": ["name"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "macro_record_stop",
+            "description": "Stop macro recording and save it. Returns the saved macro with all captured steps.",
+            "parameters": {"type": "object", "properties": {}},
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "macro_record_browser",
+            "description": "Start browser-level recording: injects JS event listeners to capture real user interactions (clicks, typing, scrolling).",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "name": {"type": "string", "description": "Name for the macro"},
+                    "url": {"type": "string", "description": "Starting URL (optional)", "default": ""},
+                },
+                "required": ["name"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "macro_record_stop_browser",
+            "description": "Stop browser-level recording, collect captured events, and save as macro.",
+            "parameters": {"type": "object", "properties": {}},
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "macro_play",
+            "description": "Replay a saved macro, executing all recorded steps with original timing.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "macro_id": {"type": "integer", "description": "ID of the macro to replay"},
+                },
+                "required": ["macro_id"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "macro_list",
+            "description": "List all saved macros with step counts and durations.",
+            "parameters": {"type": "object", "properties": {}},
+        },
+    },
+    # Screen Recording
+    {
+        "type": "function",
+        "function": {
+            "name": "screen_record_start",
+            "description": "Start recording the browser screen as a video via CDP screencast.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "fps": {"type": "integer", "description": "Frames per second (1-30)", "default": 10},
+                    "quality": {"type": "integer", "description": "JPEG quality (10-100)", "default": 80},
+                },
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "screen_record_stop",
+            "description": "Stop screen recording and return compiled video as base64.",
+            "parameters": {"type": "object", "properties": {}},
+        },
+    },
+    # YouTube
+    {
+        "type": "function",
+        "function": {
+            "name": "youtube_play",
+            "description": "Search YouTube and navigate Chrome to the first matching video.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "query": {"type": "string", "description": "YouTube search query"},
+                },
+                "required": ["query"],
+            },
+        },
+    },
 ]
 
 
@@ -1184,6 +1291,81 @@ async def _handle_export_pdf(**kwargs) -> dict:
     return {"data_base64": base64.b64encode(buffer.getvalue()).decode(), "size": len(buffer.getvalue())}
 
 
+# ─── Macro & Screen Recording Handlers ───
+
+async def _handle_macro_record_start(**kwargs) -> dict:
+    from core.macro import recorder
+    return recorder.start(kwargs["name"], kwargs.get("url", ""))
+
+
+async def _handle_macro_record_stop(**kwargs) -> dict:
+    from core.macro import recorder
+    return await recorder.stop()
+
+
+async def _handle_macro_record_browser(**kwargs) -> dict:
+    from core.macro import recorder
+    return await recorder.start_browser(kwargs["name"], kwargs.get("url", ""))
+
+
+async def _handle_macro_record_stop_browser(**kwargs) -> dict:
+    from core.macro import recorder
+    return await recorder.stop_browser()
+
+
+async def _handle_macro_play(**kwargs) -> dict:
+    from core.macro import recorder
+    return await recorder.play(kwargs["macro_id"])
+
+
+async def _handle_macro_list(**kwargs) -> dict:
+    from core.macro import recorder
+    return {"macros": await recorder.list_macros()}
+
+
+async def _handle_screen_record_start(**kwargs) -> dict:
+    from core.recording import screen_recorder
+    return await screen_recorder.start(fps=kwargs.get("fps", 10), quality=kwargs.get("quality", 80))
+
+
+async def _handle_screen_record_stop(**kwargs) -> dict:
+    from core.recording import screen_recorder
+    return await screen_recorder.stop()
+
+
+async def _handle_youtube_play(**kwargs) -> dict:
+    from core.cdp_bridge import cdp
+    import asyncio
+    from urllib.parse import urlparse, parse_qs
+
+    query = kwargs["query"]
+
+    def _yt_search():
+        import yt_dlp
+        ydl_opts = {"quiet": True, "extract_flat": True, "default_search": "ytsearch1"}
+        with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+            results = ydl.extract_info(f"ytsearch1:{query}", download=False)
+            entries = results.get("entries", [])
+            if entries:
+                return entries[0].get("url") or entries[0].get("webpage_url")
+        return None
+
+    video_url = await asyncio.get_event_loop().run_in_executor(None, _yt_search)
+
+    if not video_url:
+        return {"error": f"No video found for: {query}"}
+
+    if not video_url.startswith("http"):
+        video_url = f"https://www.youtube.com{video_url}"
+
+    parsed = urlparse(video_url)
+    video_id = parse_qs(parsed.query).get("v", [None])[0] or parsed.path.split("/")[-1]
+
+    await cdp.navigate(video_url)
+
+    return {"status": "playing", "query": query, "video_url": video_url, "video_id": video_id}
+
+
 # ─── Handler Registry ───
 
 TOOL_HANDLERS = {
@@ -1227,6 +1409,15 @@ TOOL_HANDLERS = {
     "add_to_space": _handle_add_to_space,
     "export_markdown": _handle_export_markdown,
     "export_pdf": _handle_export_pdf,
+    "macro_record_start": _handle_macro_record_start,
+    "macro_record_stop": _handle_macro_record_stop,
+    "macro_record_browser": _handle_macro_record_browser,
+    "macro_record_stop_browser": _handle_macro_record_stop_browser,
+    "macro_play": _handle_macro_play,
+    "macro_list": _handle_macro_list,
+    "screen_record_start": _handle_screen_record_start,
+    "screen_record_stop": _handle_screen_record_stop,
+    "youtube_play": _handle_youtube_play,
 }
 
 

@@ -8,6 +8,7 @@ The LLM decides when to search, browse, click, extract. It runs in a loop:
 5. Stream all steps + final answer to the client via SSE
 """
 
+import asyncio
 import json
 import logging
 from typing import Optional
@@ -105,9 +106,42 @@ async def execute_tool(name: str, args: dict) -> dict:
             from core.cdp_bridge import cdp
             try:
                 content = await cdp.get_content()
-                return {"tool": "screenshot", "page_text_preview": content[:2000]}
+                return {"tool": "screenshot", "page_text_preview": (content or "")[:3000]}
             except Exception as e:
                 return {"tool": "screenshot", "error": str(e)}
+
+        elif name == "youtube_play":
+            from core.cdp_bridge import cdp
+            from urllib.parse import urlparse, parse_qs
+
+            query_str = args["query"]
+
+            # Use yt-dlp to search YouTube — much more reliable than DOM scraping
+            def _yt_search():
+                import yt_dlp
+                ydl_opts = {"quiet": True, "extract_flat": True, "default_search": "ytsearch1"}
+                with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+                    results = ydl.extract_info(f"ytsearch1:{query_str}", download=False)
+                    entries = results.get("entries", [])
+                    if entries:
+                        return entries[0].get("url") or entries[0].get("webpage_url")
+                return None
+
+            video_url = await asyncio.get_event_loop().run_in_executor(None, _yt_search)
+
+            if not video_url:
+                return {"tool": "youtube_play", "error": f"No video found for: {query_str}"}
+
+            if not video_url.startswith("http"):
+                video_url = f"https://www.youtube.com{video_url}"
+
+            parsed = urlparse(video_url)
+            video_id = parse_qs(parsed.query).get("v", [None])[0] or parsed.path.split("/")[-1]
+
+            # Navigate Chrome to play it
+            await cdp.navigate(video_url)
+
+            return {"tool": "youtube_play", "query": query_str, "video_url": video_url, "video_id": video_id}
 
         else:
             return {"error": f"Unknown tool: {name}"}
@@ -159,6 +193,12 @@ def format_tool_result_for_llm(tool_result: dict) -> str:
         if preview:
             return f"Current page content (first 2000 chars):\n{preview}"
         return f"Screenshot taken. Error: {tool_result.get('error', 'unknown')}"
+
+    elif tool == "youtube_play":
+        vid = tool_result.get("video_id", "")
+        if tool_result.get("error"):
+            return f"YouTube play failed: {tool_result['error']}"
+        return f"Now playing YouTube video: {tool_result.get('video_url', '')} (video_id: {vid})"
 
     return json.dumps(tool_result)
 
@@ -268,7 +308,10 @@ async def agent_chat(req: AgentRequest):
                                 all_sources.append(s)
 
                     result_summary = format_tool_result_for_llm(tool_result)[:500]
-                    yield f"data: {json.dumps({'type': 'tool_result', 'tool': tool_name, 'summary': result_summary})}\n\n"
+                    sse_event = {'type': 'tool_result', 'tool': tool_name, 'summary': result_summary}
+                    if tool_name == "youtube_play" and tool_result.get("video_id"):
+                        sse_event["video_id"] = tool_result["video_id"]
+                    yield f"data: {json.dumps(sse_event)}\n\n"
 
                     messages.append({"role": "tool", "tool_call_id": tc.get("id", ""), "content": format_tool_result_for_llm(tool_result)})
 
