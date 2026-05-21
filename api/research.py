@@ -148,6 +148,10 @@ async def deep_research(req: ResearchRequest):
 
                 yield f"data: {json.dumps({'type': 'done', 'conversation_id': conv.id, 'message_id': assistant_msg.id, 'sources': sources_formatted})}\n\n"
 
+                # Emit event
+                from core.events import emit
+                emit("research.done", {"query": req.query, "conversation_id": conv.id, "sources": len(extracted)})
+
         except Exception as e:
             logger.error(f"Research error: {e}", exc_info=True)
             yield f"data: {json.dumps({'type': 'error', 'error': str(e)})}\n\n"

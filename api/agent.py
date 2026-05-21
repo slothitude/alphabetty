@@ -44,8 +44,21 @@ class AgentRequest(BaseModel):
 async def plan_step(query: str) -> str:
     """LLM breaks the query into sub-questions and prioritizes tools."""
     messages = [
-        {"role": "system", "content": "You are a research planner. Given a query, break it into 2-4 sub-questions and suggest which tools to use first. Be brief — 2-3 sentences max."},
-        {"role": "user", "content": f"Plan research for: {query}"},
+        {"role": "system", "content": """You are a planning assistant for an AI agent with these capabilities:
+- search(query) — web search
+- browse(url) — navigate and read pages
+- extract(selector) — extract page content
+- click(selector) / type_text(selector, text) — interact with pages
+- scroll(direction) / wait_for(selector) — navigate pages
+- screenshot() — see current page
+- tab_list() / tab_new(url) — manage Chrome tabs
+- macro_record(name) / macro_stop() / macro_play(id) — record & replay macros
+- youtube_play(query) — play YouTube videos
+- print_pdf() — print page as PDF
+- delegate(task, agent) — delegate sub-tasks to other agents
+
+Given a user query, briefly state which tools to use and in what order. 1-2 sentences max."""},
+        {"role": "user", "content": f"Plan approach for: {query}"},
     ]
     return await call_llm(messages)
 
@@ -141,7 +154,65 @@ async def execute_tool(name: str, args: dict) -> dict:
             # Navigate Chrome to play it
             await cdp.navigate(video_url)
 
+            # Emit event
+            from core.events import emit
+            emit("youtube.playing", {"query": query_str, "video_url": video_url, "video_id": video_id})
+
             return {"tool": "youtube_play", "query": query_str, "video_url": video_url, "video_id": video_id}
+
+        elif name == "macro_record":
+            from core.macro import recorder
+            result = recorder.start(args["name"], args.get("url", ""))
+            return {"tool": "macro_record", **result}
+
+        elif name == "macro_stop":
+            from core.macro import recorder
+            result = await recorder.stop()
+            from core.events import emit
+            emit("macro.done", result)
+            return {"tool": "macro_stop", **result}
+
+        elif name == "macro_play":
+            from core.macro import recorder
+            result = await recorder.play(args["macro_id"])
+            from core.events import emit
+            emit("macro.done", result)
+            return {"tool": "macro_play", **result}
+
+        elif name == "tab_list":
+            from core.cdp_bridge import cdp
+            tabs = await cdp.get_tabs()
+            return {"tool": "tab_list", "tabs": tabs, "count": len(tabs)}
+
+        elif name == "tab_new":
+            from core.cdp_bridge import cdp
+            result = await cdp.create_tab(args.get("url", "about:blank"))
+            from core.events import emit
+            emit("tab.created", result)
+            return {"tool": "tab_new", **result}
+
+        elif name == "scroll":
+            from core.cdp_bridge import cdp
+            direction = args.get("direction", "down")
+            amount = args.get("amount", 300)
+            y = -amount if direction == "up" else amount
+            result = await cdp.scroll(0, y)
+            return {"tool": "scroll", **result}
+
+        elif name == "wait_for":
+            from core.cdp_bridge import cdp
+            result = await cdp.wait_for_selector(args["selector"], args.get("timeout", 10000))
+            return {"tool": "wait_for", **result}
+
+        elif name == "print_pdf":
+            from core.cdp_bridge import cdp
+            result = await cdp.print_pdf()
+            return {"tool": "print_pdf", **result}
+
+        elif name == "delegate":
+            from core.agent_bridge import delegate
+            result = await delegate(args["task"], args.get("agent"))
+            return {"tool": "delegate", **result}
 
         else:
             return {"error": f"Unknown tool: {name}"}
@@ -199,6 +270,47 @@ def format_tool_result_for_llm(tool_result: dict) -> str:
         if tool_result.get("error"):
             return f"YouTube play failed: {tool_result['error']}"
         return f"Now playing YouTube video: {tool_result.get('video_url', '')} (video_id: {vid})"
+
+    elif tool == "macro_record":
+        return f"Macro recording started: {tool_result.get('name', 'unnamed')}"
+
+    elif tool == "macro_stop":
+        if tool_result.get("error"):
+            return f"Macro stop failed: {tool_result['error']}"
+        return f"Macro saved: {tool_result.get('name', 'unnamed')} (id={tool_result.get('id')}, {tool_result.get('step_count', 0)} steps)"
+
+    elif tool == "macro_play":
+        if tool_result.get("error"):
+            return f"Macro play failed: {tool_result['error']}"
+        return f"Macro played: {tool_result.get('macro_name', '')} ({tool_result.get('steps_played', 0)}/{tool_result.get('steps_total', 0)} steps)"
+
+    elif tool == "tab_list":
+        tabs = tool_result.get("tabs", [])
+        lines = [f"Open tabs ({len(tabs)}):"]
+        for t in tabs:
+            lines.append(f"  - [{t.get('id', '?')[:8]}] {t.get('title', 'Untitled')[:60]} — {t.get('url', '')[:80]}")
+        return "\n".join(lines)
+
+    elif tool == "tab_new":
+        return f"New tab created: {tool_result.get('url', 'about:blank')} (targetId: {tool_result.get('targetId', '')})"
+
+    elif tool == "scroll":
+        return f"Scrolled {tool_result.get('x', 0)},{tool_result.get('y', 300)}"
+
+    elif tool == "wait_for":
+        if tool_result.get("status") == "timeout":
+            return f"Timeout waiting for element: {tool_result.get('selector')}"
+        return f"Element found: {tool_result.get('selector')} (waited {tool_result.get('waited_ms', 0)}ms)"
+
+    elif tool == "print_pdf":
+        if tool_result.get("error"):
+            return f"PDF print failed: {tool_result['error']}"
+        return f"PDF generated: {tool_result.get('size_bytes', 0)} bytes"
+
+    elif tool == "delegate":
+        if tool_result.get("error"):
+            return f"Delegation failed: {tool_result['error']}"
+        return f"Delegated to {tool_result.get('agent', 'unknown')}:\n{tool_result.get('result', '')[:3000]}"
 
     return json.dumps(tool_result)
 
@@ -378,6 +490,10 @@ async def agent_chat(req: AgentRequest):
                 await save_db.refresh(assistant_msg)
 
                 yield f"data: {json.dumps({'type': 'done', 'conversation_id': conv_id, 'message_id': assistant_msg.id, 'sources': all_sources[:20], 'follow_ups': follow_ups, 'tool_calls': len(tool_calls_log), 'title': f'Agent: {req.query[:80]}' if is_first else None})}\n\n"
+
+                # Emit event
+                from core.events import emit
+                emit("agent.done", {"query": req.query, "conversation_id": conv_id, "tool_calls": len(tool_calls_log)})
 
         except Exception as e:
             logger.error(f"Agent error: {e}", exc_info=True)

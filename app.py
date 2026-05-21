@@ -44,6 +44,7 @@ from api.export import router as export_router
 from api.agent import router as agent_router
 from api.graph import router as graph_router
 from api.tools import router as tools_router
+from api.events import router as events_router
 
 app.include_router(chat_router, prefix="/api")
 app.include_router(search_router, prefix="/api")
@@ -56,6 +57,7 @@ app.include_router(export_router, prefix="/api")
 app.include_router(agent_router, prefix="/api")
 app.include_router(graph_router, prefix="/api")
 app.include_router(tools_router, prefix="/api")
+app.include_router(events_router, prefix="/api")
 
 
 @app.get("/")

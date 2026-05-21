@@ -80,11 +80,54 @@ class YouTubeRequest(BaseModel):
     query: str
 
 
+class TabUrlRequest(BaseModel):
+    url: str = "about:blank"
+
+
+class TabIdRequest(BaseModel):
+    target_id: str
+
+
 # ─── Tab management ───
 
 @router.get("/cdp/tabs")
 async def list_tabs():
     return {"tabs": await cdp.get_tabs()}
+
+
+@router.post("/cdp/tab/new")
+async def create_tab(req: TabUrlRequest):
+    """Open a new Chrome tab and navigate to URL."""
+    result = await cdp.create_tab(req.url)
+    return result
+
+
+@router.post("/cdp/tab/close")
+async def close_tab(req: TabIdRequest):
+    """Close a Chrome tab by target ID."""
+    result = await cdp.close_tab(req.target_id)
+    return result
+
+
+@router.post("/cdp/tab/activate")
+async def activate_tab(req: TabIdRequest):
+    """Activate (focus) a Chrome tab by target ID."""
+    result = await cdp.activate_tab(req.target_id)
+    return result
+
+
+@router.get("/cdp/print-pdf")
+async def print_pdf():
+    """Print the current page as PDF."""
+    result = await cdp.print_pdf()
+    return result
+
+
+@router.post("/cdp/wait-for")
+async def wait_for_element(req: QueryRequest):
+    """Wait for an element matching a CSS selector to appear."""
+    result = await cdp.wait_for_selector(req.selector, timeout=10000)
+    return result
 
 
 @router.get("/cdp/status")

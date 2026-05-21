@@ -197,25 +197,169 @@ AGENT_TOOLS = [
             },
         },
     },
+    {
+        "type": "function",
+        "function": {
+            "name": "macro_record",
+            "description": "Start recording a macro of browser interactions. Give it a name and optional starting URL.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "name": {"type": "string", "description": "Name for the macro"},
+                    "url": {"type": "string", "description": "Optional starting URL for the macro", "default": ""},
+                },
+                "required": ["name"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "macro_stop",
+            "description": "Stop recording the current macro and save it.",
+            "parameters": {
+                "type": "object",
+                "properties": {},
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "macro_play",
+            "description": "Replay a previously recorded macro by its ID.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "macro_id": {"type": "integer", "description": "ID of the macro to replay"},
+                },
+                "required": ["macro_id"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "tab_list",
+            "description": "List all open Chrome tabs.",
+            "parameters": {
+                "type": "object",
+                "properties": {},
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "tab_new",
+            "description": "Open a new Chrome tab and navigate to a URL.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "url": {"type": "string", "description": "URL to open in the new tab", "default": "about:blank"},
+                },
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "scroll",
+            "description": "Scroll the current page up or down.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "direction": {"type": "string", "description": "Direction to scroll: 'up' or 'down'", "enum": ["up", "down"]},
+                    "amount": {"type": "integer", "description": "Pixels to scroll (default 300)", "default": 300},
+                },
+                "required": ["direction"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "wait_for",
+            "description": "Wait for an element matching a CSS selector to appear on the page. Useful after navigation or clicking.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "selector": {"type": "string", "description": "CSS selector to wait for"},
+                    "timeout": {"type": "integer", "description": "Max wait in milliseconds (default 10000)", "default": 10000},
+                },
+                "required": ["selector"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "print_pdf",
+            "description": "Print the current Chrome page as a PDF document.",
+            "parameters": {
+                "type": "object",
+                "properties": {},
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "delegate",
+            "description": "Delegate a sub-task to another agent. The agent will process the task and return results. Use for parallel work or specialized capabilities.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "task": {"type": "string", "description": "Description of the task to delegate"},
+                    "agent": {"type": "string", "description": "Name of the agent to delegate to (optional, uses first available if omitted)"},
+                },
+                "required": ["task"],
+            },
+        },
+    },
 ]
 
-AGENT_SYSTEM = """You are Alphabetty, an autonomous AI research agent with web browsing capabilities.
+AGENT_SYSTEM = """You are Alphabetty, an autonomous AI research agent with full web browsing and automation capabilities.
 
-You have these tools available:
+## Available Tools
+
+### Research
 - **search(query)** — Search the web via SearXNG
 - **browse(url)** — Navigate to a URL and extract page text
-- **extract(selector)** — Extract text from a specific CSS selector on the current page
+- **extract(selector)** — Extract text from a specific CSS selector
+- **screenshot()** — Take a screenshot to see the current page
+
+### Interaction
 - **click(selector)** — Click an element on the current page
 - **type_text(selector, text)** — Type into an input field
-- **screenshot()** — Take a screenshot to see the current page
-- **youtube_play(query)** — Search YouTube and play a video in Chrome. Returns video URL and ID.
+- **scroll(direction, amount)** — Scroll the page up or down
+- **wait_for(selector, timeout)** — Wait for an element to appear
+
+### Tab Management
+- **tab_list()** — List all open Chrome tabs
+- **tab_new(url)** — Open a new tab and navigate to URL
+
+### Macros & Recording
+- **macro_record(name, url)** — Start recording browser interactions as a macro
+- **macro_stop()** — Stop recording and save the macro
+- **macro_play(macro_id)** — Replay a saved macro
+
+### Media
+- **youtube_play(query)** — Search YouTube and play a video in Chrome
+- **print_pdf()** — Print the current page as PDF
+
+### Delegation
+- **delegate(task, agent)** — Delegate a sub-task to another agent
 
 ## Agent Strategy
 1. Start by searching for the user's query
 2. Browse the most relevant results to get detailed information
 3. If you need more info, search again with refined queries
 4. Click links, read pages, extract data as needed
-5. Synthesize all findings into a comprehensive answer with citations
+5. Use wait_for() after navigation to ensure page content is loaded
+6. Use tab management to work with multiple pages simultaneously
+7. Delegate sub-tasks to other agents when parallel work is needed
+8. Synthesize all findings into a comprehensive answer with citations
 
 ## Rules
 - Always cite sources as [1], [2], etc.

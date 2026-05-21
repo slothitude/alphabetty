@@ -142,7 +142,10 @@ class CDPBridge:
         if _recorder and _recorder.recording:
             _recorder.record_step("navigate", {"url": url})
         self._stealth_injected = False
-        return await self.send_command("Page.navigate", {"url": url})
+        result = await self.send_command("Page.navigate", {"url": url})
+        from core.events import emit
+        emit("page.loaded", {"url": url})
+        return result
 
     async def get_content(self) -> str:
         result = await self.send_command(
@@ -244,6 +247,49 @@ class CDPBridge:
             "deltaX": x, "deltaY": y,
         })
         return {"status": "scrolled", "x": x, "y": y}
+
+    # ─── Tab management ───
+
+    async def create_tab(self, url: str = "about:blank") -> dict:
+        """Open a new Chrome tab and optionally navigate to URL."""
+        result = await self.send_command("Target.createTarget", {"url": url})
+        target_id = result.get("targetId")
+        return {"status": "created", "targetId": target_id, "url": url}
+
+    async def close_tab(self, target_id: str) -> dict:
+        """Close a Chrome tab by target ID."""
+        await self.send_command("Target.closeTarget", {"targetId": target_id})
+        return {"status": "closed", "targetId": target_id}
+
+    async def activate_tab(self, target_id: str) -> dict:
+        """Activate (focus) a Chrome tab by target ID."""
+        await self.send_command("Target.activateTarget", {"targetId": target_id})
+        return {"status": "activated", "targetId": target_id}
+
+    # ─── Wait / PDF ───
+
+    async def wait_for_selector(self, selector: str, timeout: int = 10000) -> dict:
+        """Poll until an element matching the selector appears. Returns when found or timeout."""
+        interval = 0.3
+        elapsed = 0.0
+        while elapsed < timeout / 1000.0:
+            node_id = await self.query_selector(selector)
+            if node_id:
+                return {"status": "found", "selector": selector, "waited_ms": int(elapsed * 1000)}
+            await asyncio.sleep(interval)
+            elapsed += interval
+        return {"status": "timeout", "selector": selector, "timeout_ms": timeout}
+
+    async def print_pdf(self) -> dict:
+        """Print the current page as a PDF (base64-encoded)."""
+        import base64
+        result = await self.send_command("Page.printToPDF", {
+            "printBackground": True,
+            "paperWidth": 8.5,
+            "paperHeight": 11,
+        })
+        pdf_b64 = result.get("data", "")
+        return {"status": "ok", "pdf_base64": pdf_b64[:100] + "...", "size_bytes": len(base64.b64decode(pdf_b64))}
 
     async def screenshot(self, format: str = "png") -> bytes:
         import base64

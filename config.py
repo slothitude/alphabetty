@@ -26,6 +26,9 @@ class Settings(BaseSettings):
     port: int = 7700
     upload_dir: str = "/uploads"
 
+    # Agent bridge — comma-separated "name=url" pairs for outbound agent calling
+    agent_endpoints: str = ""
+
     model_config = {"env_prefix": "ALPHABETTY_"}
 
 

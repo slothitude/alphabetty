@@ -22,6 +22,7 @@ const app = {
         this.renderAmbientBar();
         this.renderKGThumb();
         this.loadSpaceChips();
+        this.initEventStream();
         this.dismissSplash();
     },
 
@@ -103,6 +104,73 @@ const app = {
         };
         poll();
         setInterval(poll, 30000);
+    },
+
+    // ─── Event Stream (SSE) ───
+
+    initEventStream() {
+        try {
+            const es = new EventSource('/api/events');
+            es.onmessage = (e) => {
+                try {
+                    const event = JSON.parse(e.data);
+                    this.handleEvent(event);
+                } catch {}
+            };
+            es.onerror = () => {
+                // Reconnect is handled automatically by EventSource
+            };
+        } catch (e) {
+            console.warn('EventSource not available:', e);
+        }
+    },
+
+    handleEvent(event) {
+        const type = event.type;
+        const data = event.data || {};
+
+        // Route events to UI
+        switch (type) {
+            case 'page.loaded':
+                this.appendTraceLog({ type: 'navigate', message: `Loaded: ${data.url || 'page'}` });
+                break;
+            case 'research.done':
+                this.showToast(`Research complete: ${data.sources || 0} sources`, 'success');
+                break;
+            case 'macro.done':
+                this.showToast(`Macro done: ${(data.step_count || data.steps_played || 0)} steps`, 'success');
+                break;
+            case 'recording.done':
+                this.showToast(`Recording stopped: ${data.frames || 0} frames`, 'info');
+                break;
+            case 'youtube.playing':
+                if (data.video_id) {
+                    this.appendTraceLog({ type: 'youtube', message: `Playing: ${data.query || 'video'}` });
+                }
+                break;
+            case 'agent.done':
+                this.showToast(`Agent done: ${data.tool_calls || 0} tool calls`, 'success');
+                break;
+            case 'tab.created':
+                this.appendTraceLog({ type: 'tab', message: `New tab: ${data.url || 'blank'}` });
+                break;
+        }
+    },
+
+    showToast(message, type = 'info') {
+        const container = document.getElementById('toast-container');
+        if (!container) return;
+
+        const toast = document.createElement('div');
+        toast.className = `toast toast-${type}`;
+        toast.textContent = message;
+        container.appendChild(toast);
+
+        // Auto-remove after 4s
+        setTimeout(() => {
+            toast.classList.add('fade-out');
+            setTimeout(() => toast.remove(), 400);
+        }, 4000);
     },
 
     // ─── Ambient Bar ───
