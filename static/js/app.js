@@ -4,13 +4,13 @@ const app = {
     conversations: [],
     streaming: false,
     proSearch: false,
-    agentMode: false,
+    agentMode: true,
     domPanelOpen: false,
     sidebarFilter: '',
     activeTagFilter: null,
     viewportOpen: false,
     viewportMode: null, // 'mjpeg' | 'youtube' | null
-    activeMode: 'concise',
+    activeMode: 'agent',
 
     async init() {
         this.loadConversations();
@@ -24,6 +24,13 @@ const app = {
         this.loadSpaceChips();
         this.initEventStream();
         this.dismissSplash();
+        // Reflect default agent mode in UI
+        if (this.agentMode) {
+            const ab = document.getElementById('agent-btn');
+            const al = document.getElementById('agent-label');
+            if (ab) ab.style.background = 'var(--gold-dim)';
+            if (al) al.style.display = '';
+        }
     },
 
     dismissSplash() {
