@@ -32,6 +32,14 @@ logger = logging.getLogger(__name__)
 MAX_TOOL_ROUNDS = 15
 REFLECT_EVERY_N = 5
 
+# Session-level active tab tracking — set by tab_new, used by all tools
+_active_tab_id: str | None = None
+
+
+def _get_tab_id() -> str | None:
+    """Get the active tab ID for this agent session."""
+    return _active_tab_id
+
 
 class AgentRequest(BaseModel):
     query: str
@@ -90,35 +98,55 @@ async def execute_tool(name: str, args: dict) -> dict:
             }
 
         elif name == "browse":
-            content = await fetch_and_extract(args["url"])
-            return {
-                "tool": "browse",
-                "url": args["url"],
-                "title": content.get("title", ""),
-                "text": content.get("text", "")[:12000],
-                "error": content.get("error"),
-            }
+            tid = _get_tab_id()
+            if tid:
+                # Use CDP to navigate and extract — handles JS-heavy pages
+                from core.cdp_bridge import cdp
+                await cdp.navigate(args["url"], tab_id=tid)
+                await asyncio.sleep(2)
+                title = await cdp.evaluate("document.title", tab_id=tid)
+                content = await cdp.get_content(tab_id=tid)
+                return {
+                    "tool": "browse",
+                    "url": args["url"],
+                    "title": title or "",
+                    "text": (content or "")[:12000],
+                }
+            else:
+                # Fallback: HTTP fetch
+                content = await fetch_and_extract(args["url"])
+                return {
+                    "tool": "browse",
+                    "url": args["url"],
+                    "title": content.get("title", ""),
+                    "text": content.get("text", "")[:12000],
+                    "error": content.get("error"),
+                }
 
         elif name == "extract":
             from core.cdp_bridge import cdp
+            tid = _get_tab_id()
             expr = f'document.querySelector("{args["selector"]}")?.innerText || "Element not found"'
-            result = await cdp.evaluate(expr)
+            result = await cdp.evaluate(expr, tab_id=tid)
             return {"tool": "extract", "selector": args["selector"], "text": result or "Not found"}
 
         elif name == "click":
             from core.cdp_bridge import cdp
-            result = await cdp.click(args["selector"])
+            tid = _get_tab_id()
+            result = await cdp.click(args["selector"], tab_id=tid)
             return {"tool": "click", "selector": args["selector"], "result": result}
 
         elif name == "type_text":
             from core.cdp_bridge import cdp
-            result = await cdp.type_text(args["selector"], args["text"])
+            tid = _get_tab_id()
+            result = await cdp.type_text(args["selector"], args["text"], tab_id=tid)
             return {"tool": "type_text", "selector": args["selector"], "result": result}
 
         elif name == "screenshot":
             from core.cdp_bridge import cdp
+            tid = _get_tab_id()
             try:
-                content = await cdp.get_content()
+                content = await cdp.get_content(tab_id=tid)
                 return {"tool": "screenshot", "page_text_preview": (content or "")[:3000]}
             except Exception as e:
                 return {"tool": "screenshot", "error": str(e)}
@@ -187,26 +215,33 @@ async def execute_tool(name: str, args: dict) -> dict:
         elif name == "tab_new":
             from core.cdp_bridge import cdp
             result = await cdp.create_tab(args.get("url", "about:blank"))
+            # Set as active tab for subsequent tool calls
+            if result.get("targetId"):
+                global _active_tab_id
+                _active_tab_id = result["targetId"]
             from core.events import emit
             emit("tab.created", result)
             return {"tool": "tab_new", **result}
 
         elif name == "scroll":
             from core.cdp_bridge import cdp
+            tid = _get_tab_id()
             direction = args.get("direction", "down")
             amount = args.get("amount", 300)
             y = -amount if direction == "up" else amount
-            result = await cdp.scroll(0, y)
+            result = await cdp.scroll(0, y, tab_id=tid)
             return {"tool": "scroll", **result}
 
         elif name == "wait_for":
             from core.cdp_bridge import cdp
-            result = await cdp.wait_for_selector(args["selector"], args.get("timeout", 10000))
+            tid = _get_tab_id()
+            result = await cdp.wait_for_selector(args["selector"], args.get("timeout", 10000), tab_id=tid)
             return {"tool": "wait_for", **result}
 
         elif name == "print_pdf":
             from core.cdp_bridge import cdp
-            result = await cdp.print_pdf()
+            tid = _get_tab_id()
+            result = await cdp.print_pdf(tab_id=tid)
             return {"tool": "print_pdf", **result}
 
         elif name == "delegate":

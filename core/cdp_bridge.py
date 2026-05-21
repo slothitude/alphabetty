@@ -137,53 +137,64 @@ class CDPBridge:
             resp = json.loads(await ws.recv())
             return resp.get("result", resp)
 
-    async def navigate(self, url: str) -> dict:
+    async def navigate(self, url: str, tab_id: str = None) -> dict:
         """Navigate — resets stealth flag so it gets re-injected."""
         if _recorder and _recorder.recording:
             _recorder.record_step("navigate", {"url": url})
         self._stealth_injected = False
-        result = await self.send_command("Page.navigate", {"url": url})
+        result = await self.send_command("Page.navigate", {"url": url}, tab_id=tab_id)
         from core.events import emit
         emit("page.loaded", {"url": url})
         return result
 
-    async def get_content(self) -> str:
+    async def get_content(self, tab_id: str = None) -> str:
         result = await self.send_command(
             "Runtime.evaluate",
             {"expression": "document.body.innerText", "returnByValue": True},
+            tab_id=tab_id,
         )
         return result.get("result", {}).get("value", "")
 
-    async def get_dom(self, depth: int = 3) -> dict:
-        doc = await self.send_command("DOM.getDocument", {"depth": depth})
+    async def get_dom(self, depth: int = 3, tab_id: str = None) -> dict:
+        doc = await self.send_command("DOM.getDocument", {"depth": depth}, tab_id=tab_id)
         return doc.get("root", {})
 
-    async def query_selector(self, selector: str) -> int:
-        doc = await self.send_command("DOM.getDocument", {"depth": 0})
+    async def query_selector(self, selector: str, tab_id: str = None) -> int:
+        doc = await self.send_command("DOM.getDocument", {"depth": 0}, tab_id=tab_id)
         node_id = doc.get("root", {}).get("nodeId", 0)
         result = await self.send_command(
             "DOM.querySelector",
             {"nodeId": node_id, "selector": selector},
+            tab_id=tab_id,
         )
         return result.get("nodeId", 0)
 
-    async def evaluate(self, expression: str) -> Any:
+    async def evaluate(self, expression: str, tab_id: str = None) -> Any:
         if _recorder and _recorder.recording:
             _recorder.record_step("evaluate", {"expression": expression})
         result = await self.send_command(
             "Runtime.evaluate",
             {"expression": expression, "returnByValue": True},
+            tab_id=tab_id,
         )
         return result.get("result", {}).get("value")
 
-    async def click(self, selector: str) -> dict:
-        """Human-like click with slight random offset and movement."""
+    async def click(self, selector: str, tab_id: str = None) -> dict:
+        """Human-like click with slight random offset and movement.
+        Falls back to JS click() for shadow DOM elements."""
         if _recorder and _recorder.recording:
             _recorder.record_step("click", {"selector": selector})
-        node_id = await self.query_selector(selector)
+        node_id = await self.query_selector(selector, tab_id=tab_id)
         if not node_id:
+            # Fallback: try JS click for shadow DOM / dynamic elements
+            js_result = await self.evaluate(
+                f'(function(){{ const el = document.querySelector("{selector}"); if(el){{ el.click(); return "clicked"; }} return null; }})()',
+                tab_id=tab_id,
+            )
+            if js_result == "clicked":
+                return {"status": "clicked_js", "selector": selector}
             return {"error": "Element not found"}
-        box = await self.send_command("DOM.getBoxModel", {"nodeId": node_id})
+        box = await self.send_command("DOM.getBoxModel", {"nodeId": node_id}, tab_id=tab_id)
         content = box.get("model", {}).get("content", [])
         if len(content) < 8:
             return {"error": "Could not determine element position"}
@@ -197,7 +208,7 @@ class CDPBridge:
         # Human-like mouse movement — dispatch mouseMoved events toward target
         await self.send_command("Input.dispatchMouseEvent", {
             "type": "mouseMoved", "x": x, "y": y,
-        })
+        }, tab_id=tab_id)
         # Tiny delay between move and click
         await asyncio.sleep(random.uniform(0.02, 0.08))
 
@@ -205,39 +216,58 @@ class CDPBridge:
         await self.send_command("Input.dispatchMouseEvent", {
             "type": "mousePressed", "x": x, "y": y,
             "button": "left", "clickCount": 1,
-        })
+        }, tab_id=tab_id)
         await asyncio.sleep(random.uniform(0.03, 0.12))
         await self.send_command("Input.dispatchMouseEvent", {
             "type": "mouseReleased", "x": x, "y": y,
             "button": "left", "clickCount": 1,
-        })
+        }, tab_id=tab_id)
 
         return {"status": "clicked", "x": round(x, 1), "y": round(y, 1)}
 
-    async def type_text(self, selector: str, text: str) -> dict:
-        """Human-like typing with random delays between keystrokes."""
+    async def type_text(self, selector: str, text: str, tab_id: str = None) -> dict:
+        """Type text into an element. For contenteditable/ProseMirror, uses JS injection
+        to avoid doubled characters from keyDown+char events."""
         if _recorder and _recorder.recording:
             _recorder.record_step("type", {"selector": selector, "text": text})
-        node_id = await self.query_selector(selector)
+        node_id = await self.query_selector(selector, tab_id=tab_id)
+
+        # Check if element is contenteditable (ProseMirror etc.)
+        is_contenteditable = await self.evaluate(
+            f'(document.querySelector("{selector}")?.contentEditable === "true") || false',
+            tab_id=tab_id,
+        )
+
+        if is_contenteditable:
+            # Use JS injection for contenteditable — avoids doubled chars
+            escaped = text.replace("\\", "\\\\").replace('"', '\\"')
+            await self.evaluate(
+                f'(function(){{ const el = document.querySelector("{selector}"); if(!el) return "not found"; el.focus(); '
+                f'document.execCommand("insertText", false, "{escaped}"); '
+                f'el.dispatchEvent(new Event("input", {{bubbles: true}})); return "done"; }})()',
+                tab_id=tab_id,
+            )
+            return {"status": "typed", "text": text}
+
+        # Standard input/textarea — use CDP keystroke events
         if node_id:
-            await self.send_command("DOM.focus", {"nodeId": node_id})
+            await self.send_command("DOM.focus", {"nodeId": node_id}, tab_id=tab_id)
 
         for char in text:
             await self.send_command("Input.dispatchKeyEvent", {
                 "type": "keyDown", "text": char,
-            })
+            }, tab_id=tab_id)
             await self.send_command("Input.dispatchKeyEvent", {
                 "type": "char", "text": char,
-            })
-            # Random delay between keystrokes (30-120ms, human-like)
+            }, tab_id=tab_id)
             await asyncio.sleep(random.uniform(0.03, 0.12))
             await self.send_command("Input.dispatchKeyEvent", {
                 "type": "keyUp", "text": char,
-            })
+            }, tab_id=tab_id)
 
         return {"status": "typed", "text": text}
 
-    async def scroll(self, x: int = 0, y: int = 300) -> dict:
+    async def scroll(self, x: int = 0, y: int = 300, tab_id: str = None) -> dict:
         """Human-like scroll."""
         if _recorder and _recorder.recording:
             _recorder.record_step("scroll", {"x": x, "y": y})
@@ -245,7 +275,7 @@ class CDPBridge:
             "type": "mouseWheel",
             "x": 0, "y": 0,
             "deltaX": x, "deltaY": y,
-        })
+        }, tab_id=tab_id)
         return {"status": "scrolled", "x": x, "y": y}
 
     # ─── Tab management ───
@@ -268,26 +298,34 @@ class CDPBridge:
 
     # ─── Wait / PDF ───
 
-    async def wait_for_selector(self, selector: str, timeout: int = 10000) -> dict:
-        """Poll until an element matching the selector appears. Returns when found or timeout."""
+    async def wait_for_selector(self, selector: str, timeout: int = 10000, tab_id: str = None) -> dict:
+        """Poll until an element matching the selector appears. Returns when found or timeout.
+        Uses both DOM.querySelector and JS querySelector for shadow DOM support."""
         interval = 0.3
         elapsed = 0.0
         while elapsed < timeout / 1000.0:
-            node_id = await self.query_selector(selector)
+            node_id = await self.query_selector(selector, tab_id=tab_id)
             if node_id:
                 return {"status": "found", "selector": selector, "waited_ms": int(elapsed * 1000)}
+            # Fallback: JS querySelector (works with shadow DOM / dynamic content)
+            js_found = await self.evaluate(
+                f'document.querySelector("{selector}") !== null',
+                tab_id=tab_id,
+            )
+            if js_found:
+                return {"status": "found_js", "selector": selector, "waited_ms": int(elapsed * 1000)}
             await asyncio.sleep(interval)
             elapsed += interval
         return {"status": "timeout", "selector": selector, "timeout_ms": timeout}
 
-    async def print_pdf(self) -> dict:
+    async def print_pdf(self, tab_id: str = None) -> dict:
         """Print the current page as a PDF (base64-encoded)."""
         import base64
         result = await self.send_command("Page.printToPDF", {
             "printBackground": True,
             "paperWidth": 8.5,
             "paperHeight": 11,
-        })
+        }, tab_id=tab_id)
         pdf_b64 = result.get("data", "")
         return {"status": "ok", "pdf_base64": pdf_b64[:100] + "...", "size_bytes": len(base64.b64decode(pdf_b64))}
 
