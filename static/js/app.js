@@ -1169,6 +1169,8 @@ const app = {
             spaces.load(list);
         } else if (tab === 'signin') {
             signin.load(list);
+        } else if (tab === 'dashboard') {
+            dashboard.load(list);
         } else {
             this.renderThreadList();
         }
