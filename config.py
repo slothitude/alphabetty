@@ -17,6 +17,7 @@ class Settings(BaseSettings):
     cdp_vpn_url: str = "http://192.168.0.33:9222"
     chrome_profile: str = "/chrome-profile"
     chrome_window_size: str = "1920,1080"
+    chrome_profiles_dir: str = "/chrome-profiles"  # Multi-profile parent dir
 
     # Smart Router (images)
     router_url: str = "http://192.168.0.33:4000"

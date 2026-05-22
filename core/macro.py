@@ -200,8 +200,15 @@ class MacroRecorder:
         logger.info(f"Browser macro recording stopped: {self._macro_name} ({len(steps)} steps, {duration_ms}ms)")
         return macro
 
-    async def play(self, macro_id: int) -> dict:
-        """Replay a saved macro with timing (capped 2s delays)."""
+    async def play(self, macro_id: int, variables: dict = None,
+                   on_error: str = "continue") -> dict:
+        """Replay a saved macro with timing (capped 2s delays).
+
+        Args:
+            macro_id: ID of macro to replay.
+            variables: Dict of {{variable}} substitutions for step params.
+            on_error: "continue" (skip failed step) or "abort" (stop on failure).
+        """
         macro = await self.get_macro(macro_id)
         if not macro:
             return {"error": f"Macro {macro_id} not found"}
@@ -212,14 +219,16 @@ class MacroRecorder:
 
         # Navigate to starting URL if provided
         if macro.get("url"):
-            await cdp.navigate(macro["url"])
+            url = self._interpolate(macro["url"], variables)
+            await cdp.navigate(url)
             await asyncio.sleep(0.5)
 
         start = time.monotonic()
         prev_ts = 0
         played = 0
+        errors = []
 
-        for step in steps:
+        for i, step in enumerate(steps):
             # Wait for timing (capped at 2s)
             delay_ms = min(step.get("timestamp_ms", 0) - prev_ts, 2000)
             if delay_ms > 50:
@@ -229,6 +238,21 @@ class MacroRecorder:
             action = step["action"]
             params = step.get("params", {})
 
+            # Conditional: skip if condition evaluates false
+            if action == "if":
+                condition = params.get("condition", "true")
+                try:
+                    result = await cdp.evaluate(f"!!({condition})")
+                    if not result:
+                        # Skip to matching "endif" or next step
+                        continue
+                except Exception:
+                    continue
+                continue
+
+            # Interpolate variables in string params
+            params = self._interpolate_params(params, variables)
+
             try:
                 if action == "navigate":
                     await cdp.navigate(params["url"])
@@ -236,25 +260,57 @@ class MacroRecorder:
                     await cdp.click(params["selector"])
                 elif action == "type":
                     await cdp.type_text(params["selector"], params["text"])
+                elif action == "insert_text":
+                    await cdp.insert_text(params["text"])
                 elif action == "scroll":
                     await cdp.scroll(params.get("x", 0), params.get("y", 300))
                 elif action == "evaluate":
                     await cdp.evaluate(params["expression"])
+                elif action == "wait_for":
+                    await cdp.wait_for_selector(params["selector"], timeout=params.get("timeout", 10000))
+                elif action == "click_at":
+                    await cdp.click_at(float(params["x"]), float(params["y"]))
                 else:
                     logger.warning(f"Unknown macro action: {action}")
                     continue
                 played += 1
             except Exception as e:
-                logger.warning(f"Macro step failed ({action}): {e}")
+                errors.append({"step": i, "action": action, "error": str(e)})
+                logger.warning(f"Macro step {i} failed ({action}): {e}")
+                if on_error == "abort":
+                    break
 
         elapsed = int((time.monotonic() - start) * 1000)
-        return {
-            "status": "played",
+        result = {
+            "status": "played" if not errors or on_error == "continue" else "partial",
             "macro_id": macro_id,
             "macro_name": macro["name"],
             "steps_played": played,
             "steps_total": len(steps),
             "playback_ms": elapsed,
+        }
+        if errors:
+            result["errors"] = errors
+        return result
+
+    @staticmethod
+    def _interpolate(text: str, variables: dict | None) -> str:
+        """Replace {{variable}} placeholders in a string."""
+        if not variables or "{{" not in text:
+            return text
+        import re
+        def replace_var(match):
+            key = match.group(1).strip()
+            return str(variables.get(key, match.group(0)))
+        return re.sub(r"\{\{(\w+)\}\}", replace_var, text)
+
+    def _interpolate_params(self, params: dict, variables: dict | None) -> dict:
+        """Interpolate variables in all string values of a params dict."""
+        if not variables:
+            return params
+        return {
+            k: self._interpolate(v, variables) if isinstance(v, str) else v
+            for k, v in params.items()
         }
 
     def status(self) -> dict:

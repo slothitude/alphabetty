@@ -35,6 +35,14 @@ async def lifespan(app: FastAPI):
     import logging
     _bg_logger = logging.getLogger("alphabetty.bg")
 
+    # Restore tabs from last session
+    try:
+        from core.cdp_bridge import cdp
+        await asyncio.sleep(5)  # Wait for Chrome to fully start
+        await cdp.restore_tabs()
+    except Exception as e:
+        _bg_logger.debug(f"Tab restore skipped: {e}")
+
     async def _chrome_health_check():
         """Periodically check Chrome health and emit events on crash."""
         while True:
@@ -86,6 +94,22 @@ from api.events import router as events_router
 from api.signin import router as signin_router
 from api.auth import router as auth_router
 
+app.include_router(auth_router, prefix="/api/v1")
+app.include_router(chat_router, prefix="/api/v1")
+app.include_router(search_router, prefix="/api/v1")
+app.include_router(cdp_router, prefix="/api/v1")
+app.include_router(research_router, prefix="/api/v1")
+app.include_router(files_router, prefix="/api/v1")
+app.include_router(images_router, prefix="/api/v1")
+app.include_router(spaces_router, prefix="/api/v1")
+app.include_router(export_router, prefix="/api/v1")
+app.include_router(agent_router, prefix="/api/v1")
+app.include_router(graph_router, prefix="/api/v1")
+app.include_router(tools_router, prefix="/api/v1")
+app.include_router(events_router, prefix="/api/v1")
+app.include_router(signin_router, prefix="/api/v1")
+
+# Backward compat: also mount all routers at /api (unversioned)
 app.include_router(auth_router, prefix="/api")
 app.include_router(chat_router, prefix="/api")
 app.include_router(search_router, prefix="/api")

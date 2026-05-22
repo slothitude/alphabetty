@@ -122,6 +122,8 @@ class MacroNameRequest(BaseModel):
 
 class MacroPlayRequest(BaseModel):
     macro_id: int
+    variables: dict = {}          # {{variable}} substitutions
+    on_error: str = "continue"    # "continue" or "abort"
 
 
 class ScreenRecordRequest(BaseModel):
@@ -234,6 +236,51 @@ async def chrome_status(user: User = Depends(get_current_user)):
         }
     except Exception as e:
         return {"status": "offline", "error": str(e)}
+
+
+# ─── Chrome Profile management ───
+
+class ProfileNameRequest(BaseModel):
+    name: str
+
+@router.get("/cdp/profiles")
+async def list_profiles(user: User = Depends(get_current_user)):
+    """List available Chrome profiles."""
+    import os
+    profiles_dir = settings.chrome_profiles_dir
+    if not os.path.exists(profiles_dir):
+        return {"profiles": ["Default"], "active": "Default"}
+    profiles = [d for d in os.listdir(profiles_dir)
+                if os.path.isdir(os.path.join(profiles_dir, d))]
+    profiles.insert(0, "Default")
+    active = os.environ.get("ALPHABETTY_ACTIVE_PROFILE", "Default")
+    return {"profiles": profiles, "active": active}
+
+
+@router.post("/cdp/profiles/create")
+async def create_profile(req: ProfileNameRequest, user: User = Depends(get_current_user)):
+    """Create a new Chrome profile directory."""
+    import os
+    name = req.name.replace("/", "").replace("\\", "").replace("..", "")
+    if not name or name == "Default":
+        raise HTTPException(400, "Invalid profile name")
+    profile_path = os.path.join(settings.chrome_profiles_dir, name)
+    os.makedirs(profile_path, exist_ok=True)
+    return {"status": "created", "profile": name, "path": profile_path}
+
+
+@router.delete("/cdp/profiles/{name}")
+async def delete_profile(name: str, user: User = Depends(get_current_user)):
+    """Delete a Chrome profile directory."""
+    import os, shutil
+    name = name.replace("/", "").replace("\\", "").replace("..", "")
+    if name == "Default":
+        raise HTTPException(400, "Cannot delete Default profile")
+    profile_path = os.path.join(settings.chrome_profiles_dir, name)
+    if os.path.exists(profile_path):
+        shutil.rmtree(profile_path)
+        return {"status": "deleted", "profile": name}
+    raise HTTPException(404, "Profile not found")
 
 
 # ─── Navigation ───
@@ -434,8 +481,8 @@ async def macro_browser_stop(user: User = Depends(get_current_user)):
 
 @router.post("/cdp/macro/play")
 async def macro_play(req: MacroPlayRequest, user: User = Depends(get_current_user)):
-    """Replay a saved macro with timing."""
-    return await recorder.play(req.macro_id)
+    """Replay a saved macro with timing, variables, and error recovery."""
+    return await recorder.play(req.macro_id, variables=req.variables, on_error=req.on_error)
 
 
 @router.get("/cdp/macro/list")
@@ -598,16 +645,35 @@ async def cdp_websocket(ws: WebSocket):
         return
 
     await ws.accept()
+    cdp_ws = None
     try:
-        ws_url = await cdp.get_ws_url()
-        async with websockets.connect(ws_url, max_size=10 * 1024 * 1024) as cdp_ws:
-            while True:
+        while True:
+            try:
                 data = await ws.receive_text()
                 msg = json.loads(data)
+                # Connect/reconnect CDP WebSocket as needed
+                if cdp_ws is None or cdp_ws.closed:
+                    ws_url = await cdp.get_ws_url()
+                    cdp_ws = await websockets.connect(ws_url, max_size=10 * 1024 * 1024).__aenter__()
                 await cdp_ws.send(json.dumps(msg))
-                resp = await cdp_ws.recv()
+                resp = await asyncio.wait_for(cdp_ws.recv(), timeout=30)
                 await ws.send_text(resp)
-    except WebSocketDisconnect:
-        pass
+            except (websockets.exceptions.ConnectionClosed, TimeoutError):
+                # CDP WS dropped — reconnect on next message
+                if cdp_ws and not cdp_ws.closed:
+                    try:
+                        await cdp_ws.close()
+                    except Exception:
+                        pass
+                cdp_ws = None
+                await ws.send_text(json.dumps({"error": "reconnecting", "retry": True}))
+            except WebSocketDisconnect:
+                break
     except Exception as e:
         logger.error(f"CDP WebSocket error: {e}")
+    finally:
+        if cdp_ws and not cdp_ws.closed:
+            try:
+                await cdp_ws.close()
+            except Exception:
+                pass

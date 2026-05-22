@@ -90,6 +90,7 @@ class CDPBridge:
         self._stealth_injected = False
         self._lock = asyncio.Lock()  # Global fallback lock
         self._tab_locks: dict[str, asyncio.Lock] = {}  # Per-tab serialization
+        self._session_file = "/data/tabs_session.json"  # Persisted tab state
 
     def _get_tab_lock(self, tab_id: str | None) -> asyncio.Lock:
         """Get or create a lock for a specific tab."""
@@ -97,6 +98,51 @@ class CDPBridge:
         if key not in self._tab_locks:
             self._tab_locks[key] = asyncio.Lock()
         return self._tab_locks[key]
+
+    # ─── Session persistence ───
+
+    def _save_tab_state(self):
+        """Persist minimal tab info to disk (fire-and-forget)."""
+        import json as _json
+        try:
+            # Schedule tab state save — runs get_tabs and writes to file
+            async def _save():
+                try:
+                    tabs = await self.get_tabs()
+                    state = [
+                        {"id": t.get("id"), "url": t.get("url"), "title": t.get("title")}
+                        for t in tabs if t.get("type") == "page"
+                    ]
+                    with open(self._session_file, "w") as f:
+                        _json.dump(state, f)
+                except Exception:
+                    pass
+            asyncio.ensure_future(_save())
+        except Exception:
+            pass
+
+    async def restore_tabs(self):
+        """Restore tabs from saved session state. Call on startup."""
+        import json as _json
+        import os
+        if not os.path.exists(self._session_file):
+            return
+        try:
+            with open(self._session_file) as f:
+                saved = _json.load(f)
+            if not saved:
+                return
+            # Get current tabs to see what's already open
+            current = await self.get_tabs()
+            current_urls = {t.get("url") for t in current if t.get("type") == "page"}
+            for tab in saved:
+                url = tab.get("url", "")
+                if url and url != "about:blank" and url not in current_urls:
+                    await self.create_tab(url)
+                    await asyncio.sleep(0.3)
+            logger.info(f"Restored {len(saved)} tab(s) from session")
+        except Exception as e:
+            logger.debug(f"Tab restore failed: {e}")
 
     def _next_id(self) -> int:
         self._msg_id += 1
@@ -344,12 +390,14 @@ class CDPBridge:
         async with self._lock:
             result = await self.send_command("Target.createTarget", {"url": url})
         target_id = result.get("targetId")
+        self._save_tab_state()
         return {"status": "created", "targetId": target_id, "url": url}
 
     async def close_tab(self, target_id: str) -> dict:
         """Close a Chrome tab by target ID."""
         async with self._lock:
             await self.send_command("Target.closeTarget", {"targetId": target_id})
+        self._save_tab_state()
         return {"status": "closed", "targetId": target_id}
 
     async def activate_tab(self, target_id: str) -> dict:
