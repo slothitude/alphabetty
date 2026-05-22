@@ -25,47 +25,65 @@ _session_token: str = ""
 
 # Jackett session cookie (linuxserver image requires cookie-based auth)
 _jackett_cookie: str = ""
+_jackett_api_key: str = ""
+
+
+async def _jackett_login() -> None:
+    """Authenticate with Jackett and cache cookie + API key."""
+    global _jackett_cookie, _jackett_api_key
+    base = settings.jackett_url
+    password = settings.jackett_api_key  # reused as admin password for linuxserver image
+
+    async with httpx.AsyncClient(timeout=15, base_url=base, follow_redirects=True) as c:
+        # GET /UI/Login follows redirects, sets TestCookie + Jackett session cookie
+        await c.get("/UI/Login")
+        # POST login ensures session is valid
+        await c.post("/UI/Dashboard", data={"password": password})
+        await c.get("/UI/Dashboard")
+
+        jackett_val = c.cookies.get("Jackett")
+        test_val = c.cookies.get("TestCookie")
+        if not jackett_val:
+            raise HTTPException(502, "Failed to authenticate with Jackett")
+
+        # Get API key while we have a valid session
+        r = await c.get("/api/v2.0/server/config")
+        if r.status_code == 200:
+            _jackett_api_key = r.json().get("api_key", "")
+
+        # Build cookie header
+        parts = []
+        if test_val:
+            parts.append(f"TestCookie={test_val}")
+        parts.append(f"Jackett={jackett_val}")
+        _jackett_cookie = "; ".join(parts)
 
 
 async def _jackett_client() -> httpx.AsyncClient:
     """Get an httpx client with valid Jackett auth cookie."""
     global _jackett_cookie
-    base = settings.jackett_url
-    password = settings.jackett_api_key  # reused as admin password for linuxserver image
 
     headers = {}
     if _jackett_cookie:
         headers["Cookie"] = _jackett_cookie
 
-    client = httpx.AsyncClient(timeout=30, base_url=base, headers=headers)
+    client = httpx.AsyncClient(timeout=30, base_url=settings.jackett_url, headers=headers)
 
-    # Test if cookie still works
-    resp = await client.get("/api/v2.0/server/config")
-    if resp.status_code == 200:
-        return client
+    if _jackett_cookie:
+        # Test if cookie still works
+        resp = await client.get("/api/v2.0/server/config")
+        if resp.status_code == 200:
+            return client
+        await client.aclose()
 
     # Cookie expired — re-login
-    await client.aclose()
+    await _jackett_login()
 
-    # Step 1: get CSRF cookie (GET /UI/Login redirects to set TestCookie)
-    login_client = httpx.AsyncClient(timeout=15, base_url=base, follow_redirects=True)
-    r1 = await login_client.get("/UI/Login")
-
-    # Step 2: POST login — follow_redirects converts 302 POST→GET, which sets session cookie
-    r2 = await login_client.post("/UI/Dashboard", data={"password": password})
-
-    # Step 3: Explicit GET dashboard to ensure session cookie is collected
-    r3 = await login_client.get("/UI/Dashboard")
-
-    jackett_cookie = login_client.cookies.get("Jackett")
-    if jackett_cookie:
-        _jackett_cookie = f"Jackett={jackett_cookie}"
-    await login_client.aclose()
-
-    if not _jackett_cookie:
-        raise HTTPException(502, "Failed to authenticate with Jackett")
-
-    return httpx.AsyncClient(timeout=30, base_url=base, headers={"Cookie": _jackett_cookie})
+    return httpx.AsyncClient(
+        timeout=30,
+        base_url=settings.jackett_url,
+        headers={"Cookie": _jackett_cookie},
+    )
 
 
 async def _transmission_rpc(method: str, arguments: dict = None) -> dict:
@@ -142,6 +160,8 @@ async def search_torrents(req: TorrentSearchRequest, user: User = Depends(get_cu
         f"/api/v2.0/indexers/all/results?"
         f"Query={quote(req.query)}&Categories=1000,2000,3000,4000,5000,6000,7000,8000"
     )
+    if _jackett_api_key:
+        search_path += f"&apikey={_jackett_api_key}"
 
     try:
         client = await _jackett_client()
