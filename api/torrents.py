@@ -98,7 +98,7 @@ async def search_torrents(req: TorrentSearchRequest, user: User = Depends(get_cu
     searx_url = settings.searxng_url
     search_url = f"{searx_url}/search?q={quote(req.query)}&categories=torrents&format=json"
 
-    async with httpx.AsyncClient(timeout=15) as client:
+    async with httpx.AsyncClient(timeout=30) as client:
         resp = await client.get(search_url)
         resp.raise_for_status()
         data = resp.json()
