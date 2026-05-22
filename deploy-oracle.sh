@@ -87,7 +87,7 @@ if [ ! -f .env ]; then
 ALPHABETTY_LLM_URL=https://api.z.ai/api/coding/paas/v4/chat/completions
 ALPHABETTY_LLM_MODEL=glm-5.1
 ALPHABETTY_LLM_API_KEY=your-key-here
-ALPHABETTY_SEARXNG_URL=http://localhost:8888
+ALPHABETTY_SEARXNG_URL=http://100.84.161.63:8888
 ALPHABETTY_OLLAMA_URL=http://localhost:11434/v1/chat/completions
 ALPHABETTY_ROUTER_URL=http://localhost:4000
 ENV
