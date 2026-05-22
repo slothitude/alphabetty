@@ -69,6 +69,17 @@ app.include_router(events_router, prefix="/api")
 app.include_router(signin_router, prefix="/api")
 
 
+# ── MCP SSE endpoint for LLM agents (GhostKV, Claude Code, etc.) ────
+import os as _os
+_mcp_enabled = _os.environ.get("ALPHABETTY_MCP_SSE", "").lower() in ("1", "true", "yes")
+if _mcp_enabled:
+    from mcp_server import mcp as _mcp
+    _mcp_app = _mcp.http_app(transport="sse", path="/sse")
+    from starlette.routing import Mount
+    app.mount("/mcp", _mcp_app)
+    print("MCP SSE endpoint mounted at /mcp/sse")
+
+
 @app.get("/")
 async def index(request: Request):
     from fastapi.responses import FileResponse

@@ -17,6 +17,8 @@ services:
       - ALPHABETTY_DB_PATH=/data/alphabetty.db
       - ALPHABETTY_SECRET_KEY=${ALPHABETTY_SECRET_KEY:-change-me-in-production}
       - ALPHABETTY_DEMO_ENABLED=${ALPHABETTY_DEMO_ENABLED:-true}
+      - ALPHABETTY_MCP_SSE=${ALPHABETTY_MCP_SSE:-true}
+      - ALPHABETTY_API_KEY=${ALPHABETTY_API_KEY:-}
     restart: unless-stopped
     extra_hosts:
       - "host.docker.internal:host-gateway"
