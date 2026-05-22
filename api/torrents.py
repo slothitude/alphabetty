@@ -63,30 +63,35 @@ async def _jackett_login() -> None:
 
 
 async def _jackett_client() -> httpx.AsyncClient:
-    """Get an httpx client with valid Jackett auth cookie."""
+    """Get an httpx client for Jackett. Uses cookie auth if available, falls back to API key only."""
     global _jackett_cookie
 
-    headers = {}
+    # If we have a cookie, test it
     if _jackett_cookie:
-        headers["Cookie"] = _jackett_cookie
-
-    client = httpx.AsyncClient(timeout=30, base_url=settings.jackett_url, headers=headers)
-
-    if _jackett_cookie:
-        # Test if cookie still works
-        resp = await client.get("/api/v2.0/server/config")
-        if resp.status_code == 200:
-            return client
+        client = httpx.AsyncClient(timeout=60, base_url=settings.jackett_url, headers={"Cookie": _jackett_cookie})
+        try:
+            resp = await client.get("/api/v2.0/server/config")
+            if resp.status_code == 200:
+                return client
+        except Exception:
+            pass
         await client.aclose()
 
-    # Cookie expired — re-login
-    await _jackett_login()
+    # If we have a settings-level API key, skip cookie login (API key in URL is sufficient)
+    if settings.jackett_api_key:
+        return httpx.AsyncClient(timeout=60, base_url=settings.jackett_url)
 
-    return httpx.AsyncClient(
-        timeout=30,
-        base_url=settings.jackett_url,
-        headers={"Cookie": _jackett_cookie},
-    )
+    # No API key in settings — try cookie login
+    try:
+        await _jackett_login()
+    except Exception:
+        pass
+
+    if _jackett_cookie:
+        return httpx.AsyncClient(timeout=60, base_url=settings.jackett_url, headers={"Cookie": _jackett_cookie})
+
+    # Last resort — plain client (will fail if Jackett requires auth)
+    return httpx.AsyncClient(timeout=60, base_url=settings.jackett_url)
 
 
 async def _transmission_rpc(method: str, arguments: dict = None) -> dict:
@@ -165,6 +170,8 @@ async def search_torrents(req: TorrentSearchRequest, user: User = Depends(get_cu
     )
     if _jackett_api_key:
         search_path += f"&apikey={_jackett_api_key}"
+    elif settings.jackett_api_key:
+        search_path += f"&apikey={settings.jackett_api_key}"
 
     try:
         client = await _jackett_client()
