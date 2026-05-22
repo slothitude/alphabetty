@@ -215,7 +215,7 @@ AGENT_TOOLS = [
         "type": "function",
         "function": {
             "name": "torrent_search",
-            "description": "Search for torrents via SearXNG. Returns results with magnet links, seeders, and file sizes. Optionally auto-adds the best result to Transmission for downloading.",
+            "description": "Search for torrents via Jackett (7 indexers behind VPN: TPB, 1337x, YTS, EZTV, LimeTorrents, TorrentProject2, Nyaa). Returns results with magnet links, seeders, and file sizes sorted by seeders. Optionally auto-adds the best result to Transmission for downloading.",
             "parameters": {
                 "type": "object",
                 "properties": {
@@ -234,6 +234,20 @@ AGENT_TOOLS = [
             "parameters": {
                 "type": "object",
                 "properties": {},
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "torrent_add",
+            "description": "Add a magnet link or torrent URL to Transmission for downloading. Use after torrent_search to download a specific result.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "url": {"type": "string", "description": "Magnet URI or .torrent URL to add"},
+                },
+                "required": ["url"],
             },
         },
     },
@@ -434,8 +448,9 @@ AGENT_SYSTEM = """You are Alphabetty, an autonomous AI research agent with full 
 - **print_pdf()** — Print the current page as PDF
 
 ### Torrents
-- **torrent_search(query, auto_add)** — Search SearXNG for torrents, optionally add to Transmission
+- **torrent_search(query, auto_add)** — Search Jackett for torrents (7 indexers behind VPN), optionally auto-add to Transmission
 - **torrent_list()** — List active torrents with progress
+- **torrent_add(url)** — Add a magnet link or torrent URL to Transmission
 
 ### Delegation
 - **delegate(task, agent)** — Delegate a sub-task to another agent
@@ -454,6 +469,14 @@ AGENT_SYSTEM = """You are Alphabetty, an autonomous AI research agent with full 
 6. Use tab management to work with multiple pages simultaneously
 7. Delegate sub-tasks to other agents when parallel work is needed
 8. Synthesize all findings into a comprehensive answer with citations
+
+## Torrent Workflow
+When a user wants to download or stream something:
+1. Use torrent_search to find results — show top results with title, size, and seeders
+2. Before adding, tell the user the file size and that streaming will be available once download completes
+3. Use torrent_add or auto_add=true to start the download
+4. Use torrent_list to check progress — report percent done, download speed, and ETA
+5. Let the user know when the download is complete and they can stream it
 
 ## Rules
 - Always cite sources as [1], [2], etc.
@@ -641,7 +664,7 @@ _TOOL_GROUPS = {
         "youtube_play", "video_play",
     },
     "torrent": {
-        "torrent_search", "torrent_list",
+        "torrent_search", "torrent_list", "torrent_add",
     },
     "macro": {
         "macro_record", "macro_stop", "macro_play",
@@ -800,9 +823,11 @@ def build_system_prompt(tools: list[dict]) -> str:
 
     torrent_tools = []
     if "torrent_search" in available:
-        torrent_tools.append("- **torrent_search(query, auto_add)** — Search SearXNG for torrents, optionally add to Transmission")
+        torrent_tools.append("- **torrent_search(query, auto_add)** — Search Jackett for torrents (7 indexers behind VPN), optionally auto-add to Transmission")
     if "torrent_list" in available:
         torrent_tools.append("- **torrent_list()** — List active torrents with progress")
+    if "torrent_add" in available:
+        torrent_tools.append("- **torrent_add(url)** — Add a magnet link or torrent URL to Transmission")
 
     if torrent_tools:
         sections.append("### Torrents\n" + "\n".join(torrent_tools))
@@ -837,6 +862,14 @@ def build_system_prompt(tools: list[dict]) -> str:
 6. Use tab management to work with multiple pages simultaneously
 7. Delegate sub-tasks to other agents when parallel work is needed
 8. Synthesize all findings into a comprehensive answer with citations
+
+## Torrent Workflow
+When a user wants to download or stream something:
+1. Use torrent_search to find results — show top results with title, size, and seeders
+2. Before adding, tell the user the file size and that streaming will be available once download completes
+3. Use torrent_add or auto_add=true to start the download
+4. Use torrent_list to check progress — report percent done, download speed, and ETA
+5. Let the user know when the download is complete and they can stream it
 
 ## Rules
 - Always cite sources as [1], [2], etc.

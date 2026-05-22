@@ -77,6 +77,7 @@ async def plan_step(query: str) -> str:
 - video_play(url) — play any video URL (YouTube, Facebook, X, TikTok, etc.)
 - torrent_search(query, auto_add) — search for torrents
 - torrent_list() — list active torrents
+- torrent_add(url) — add magnet/torrent URL to Transmission
 - print_pdf() — print page as PDF
 - delegate(task, agent) — delegate sub-tasks to other agents
 - signin_start(url, username, password) — start sign-in flow for a website
@@ -242,6 +243,18 @@ async def execute_tool(name: str, args: dict, session: AgentSession | None = Non
                 result = resp.json()
 
             return {"tool": "torrent_list", **result}
+
+        elif name == "torrent_add":
+            import httpx as _httpx
+
+            async with _httpx.AsyncClient(timeout=15) as client:
+                resp = await client.post(
+                    "http://localhost:7700/api/torrents/add",
+                    json={"url": args["url"]},
+                )
+                result = resp.json()
+
+            return {"tool": "torrent_add", **result}
 
         elif name == "macro_record":
             from core.macro import recorder
@@ -412,8 +425,17 @@ def format_tool_result_for_llm(tool_result: dict) -> str:
         lines = [f"Active torrents ({len(torrents)}):"]
         for t in torrents:
             pct = t.get("percentDone", 0) * 100
-            lines.append(f"  - {t.get('name', 'Unknown')[:60]} | {pct:.0f}% | ↓{t.get('rateDownload', 0)//1024}KB/s")
+            eta = t.get("eta", -1)
+            eta_str = f"{eta // 60}m {eta % 60}s" if eta and eta > 0 else "—"
+            size_mb = t.get("totalSize", 0) / (1024 * 1024)
+            dl_speed = t.get("rateDownload", 0) // 1024
+            lines.append(f"  - {t.get('name', 'Unknown')[:60]} | {pct:.0f}% | {size_mb:.0f}MB | ↓{dl_speed}KB/s | ETA: {eta_str}")
         return "\n".join(lines)
+
+    elif tool == "torrent_add":
+        if tool_result.get("status") == "added":
+            return f"Torrent added: {tool_result.get('name', 'Unknown')}. Download started."
+        return f"Torrent add result: {tool_result}"
 
     elif tool == "macro_record":
         return f"Macro recording started: {tool_result.get('name', 'unnamed')}"
