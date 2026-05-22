@@ -781,6 +781,103 @@ async def signin_save(name: str, url: str, username: str, password: str,
     return json.dumps(await _post("/api/signin/credentials", payload))
 
 
+# ─── Fast / Raw CDP ───
+
+@mcp.tool()
+async def raw_cdp(method: str, params: str = "{}", tab_id: str = "") -> str:
+    """Send any raw CDP protocol command directly to Chrome.
+
+    Args:
+        method: CDP method name (e.g. 'Input.dispatchMouseEvent', 'Runtime.evaluate')
+        params: JSON string of parameters
+        tab_id: Target tab ID (optional)
+    """
+    payload = {"method": method, "params": json.loads(params)}
+    if tab_id:
+        payload["tab_id"] = tab_id
+    return json.dumps(await _post("/api/cdp/send", payload))
+
+
+@mcp.tool()
+async def insert_text(text: str, tab_id: str = "") -> str:
+    """Insert text at cursor natively via CDP Input.insertText.
+    Triggers all browser events — works with React/Vue/Angular.
+    Much faster than character-by-character type_text.
+
+    Args:
+        text: Text to insert
+        tab_id: Target tab ID (optional)
+    """
+    payload = {"text": text}
+    if tab_id:
+        payload["tab_id"] = tab_id
+    return json.dumps(await _post("/api/cdp/insert-text", payload))
+
+
+@mcp.tool()
+async def click_at(x: float, y: float, tab_id: str = "") -> str:
+    """Fast mouse click at exact pixel coordinates. No delays.
+    Use when you know the x,y position and need speed.
+
+    Args:
+        x: X coordinate
+        y: Y coordinate
+        tab_id: Target tab ID (optional)
+    """
+    payload = {"x": x, "y": y}
+    if tab_id:
+        payload["tab_id"] = tab_id
+    return json.dumps(await _post("/api/cdp/click-at", payload))
+
+
+@mcp.tool()
+async def click_iframe(selector: str, iframe_selector: str = "iframe", tab_id: str = "") -> str:
+    """Click an element inside an iframe. Calculates absolute coordinates from iframe position.
+
+    Args:
+        selector: CSS selector for element inside the iframe
+        iframe_selector: CSS selector for the iframe element (default: 'iframe')
+        tab_id: Target tab ID (optional)
+    """
+    payload = {"selector": selector, "iframe_selector": iframe_selector}
+    if tab_id:
+        payload["tab_id"] = tab_id
+    return json.dumps(await _post("/api/cdp/click-iframe", payload))
+
+
+@mcp.tool()
+async def type_iframe(selector: str, text: str, iframe_selector: str = "iframe", tab_id: str = "") -> str:
+    """Focus element inside an iframe and insert text natively.
+    Uses CDP Input.insertText — works with React editors in iframes.
+
+    Args:
+        selector: CSS selector for element inside the iframe
+        text: Text to type
+        iframe_selector: CSS selector for the iframe (default: 'iframe')
+        tab_id: Target tab ID (optional)
+    """
+    payload = {"selector": selector, "text": text, "iframe_selector": iframe_selector}
+    if tab_id:
+        payload["tab_id"] = tab_id
+    return json.dumps(await _post("/api/cdp/type-iframe", payload))
+
+
+@mcp.tool()
+async def upload_file_url(selector: str, file_url: str, tab_id: str = "") -> str:
+    """Download a file from URL and upload it to a file input element.
+    No base64 needed — downloads directly to temp file and sets on input.
+
+    Args:
+        selector: CSS selector for the file input element
+        file_url: URL of the file to download and upload
+        tab_id: Target tab ID (optional)
+    """
+    payload = {"selector": selector, "file_url": file_url}
+    if tab_id:
+        payload["tab_id"] = tab_id
+    return json.dumps(await _post("/api/cdp/upload-url", payload))
+
+
 # ─── Session Leasing ───
 
 async def _acquire_session():

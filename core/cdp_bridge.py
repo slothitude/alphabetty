@@ -419,6 +419,145 @@ class CDPBridge:
         except (json.JSONDecodeError, TypeError):
             return {"raw": checks}
 
+    # ─── Fast / Raw CDP methods ───
+
+    async def send_raw(self, method: str, params: dict = None, tab_id: str = None) -> dict:
+        """Send any raw CDP protocol command. No lock — caller controls concurrency."""
+        return await self.send_command(method, params, tab_id=tab_id)
+
+    async def insert_text(self, text: str, tab_id: str = None) -> dict:
+        """Insert text at cursor using CDP Input.insertText.
+        Triggers all browser events natively — works with React/Vue.
+        Much faster than character-by-character type_text."""
+        if _recorder and _recorder.recording:
+            _recorder.record_step("insert_text", {"text": text})
+        async with self._lock:
+            result = await self.send_command("Input.insertText", {"text": text}, tab_id=tab_id)
+        return {"status": "inserted", "text": text}
+
+    async def click_at(self, x: float, y: float, tab_id: str = None) -> dict:
+        """Fast CDP mouse click at exact coordinates. No human-like delays."""
+        if _recorder and _recorder.recording:
+            _recorder.record_step("click_at", {"x": x, "y": y})
+        async with self._lock:
+            await self.send_command("Input.dispatchMouseEvent", {
+                "type": "mousePressed", "x": x, "y": y,
+                "button": "left", "clickCount": 1,
+            }, tab_id=tab_id)
+            await self.send_command("Input.dispatchMouseEvent", {
+                "type": "mouseReleased", "x": x, "y": y,
+                "button": "left", "clickCount": 1,
+            }, tab_id=tab_id)
+        return {"status": "clicked", "x": x, "y": y}
+
+    async def click_iframe(self, selector: str, iframe_selector: str = "iframe",
+                           tab_id: str = None) -> dict:
+        """Click an element inside an iframe. Gets iframe's document,
+        queries element within it, and clicks at its coordinates."""
+        async with self._lock:
+            # Get iframe content document and click coordinates
+            js = (
+                f'(function(){{'
+                f'const iframe = document.querySelector("{iframe_selector}");'
+                f'if(!iframe || !iframe.contentDocument) return {{error: "iframe not found"}};'
+                f'const el = iframe.contentDocument.querySelector("{selector}");'
+                f'if(!el) return {{error: "element not found in iframe"}};'
+                f'const rect = el.getBoundingClientRect();'
+                f'const iframeRect = iframe.getBoundingClientRect();'
+                f'return {{'
+                f'x: iframeRect.left + rect.left + rect.width/2,'
+                f'y: iframeRect.top + rect.top + rect.height/2,'
+                f'width: rect.width, height: rect.height'
+                f'}};'
+                f'}})()'
+            )
+            result = await self.send_command(
+                "Runtime.evaluate",
+                {"expression": js, "returnByValue": True},
+                tab_id=tab_id,
+            )
+            pos = result.get("result", {}).get("value", {})
+            if "error" in pos:
+                return pos
+            x, y = pos["x"], pos["y"]
+            await self.send_command("Input.dispatchMouseEvent", {
+                "type": "mousePressed", "x": x, "y": y,
+                "button": "left", "clickCount": 1,
+            }, tab_id=tab_id)
+            await self.send_command("Input.dispatchMouseEvent", {
+                "type": "mouseReleased", "x": x, "y": y,
+                "button": "left", "clickCount": 1,
+            }, tab_id=tab_id)
+        return {"status": "clicked_iframe", "selector": selector, "x": round(x, 1), "y": round(y, 1)}
+
+    async def type_iframe(self, selector: str, text: str, iframe_selector: str = "iframe",
+                          tab_id: str = None) -> dict:
+        """Click into an element inside an iframe, then insert text natively."""
+        async with self._lock:
+            # Focus the element in the iframe
+            js = (
+                f'(function(){{'
+                f'const iframe = document.querySelector("{iframe_selector}");'
+                f'if(!iframe || !iframe.contentDocument) return "iframe not found";'
+                f'const el = iframe.contentDocument.querySelector("{selector}");'
+                f'if(!el) return "element not found";'
+                f'el.focus();'
+                f'el.click();'
+                f'return "focused";'
+                f'}})()'
+            )
+            result = await self.send_command(
+                "Runtime.evaluate",
+                {"expression": js, "returnByValue": True},
+                tab_id=tab_id,
+            )
+            status = result.get("result", {}).get("value", "")
+            if status != "focused":
+                return {"error": status}
+            # Insert text natively via CDP
+            await self.send_command("Input.insertText", {"text": text}, tab_id=tab_id)
+        return {"status": "typed_iframe", "selector": selector, "text": text}
+
+    async def upload_file_url(self, selector: str, file_url: str, tab_id: str = None) -> dict:
+        """Download a file from URL and set it as the value of a file input.
+        Bypasses the need for base64 encoding."""
+        import httpx
+        import tempfile
+        import os
+        async with self._lock:
+            # Download the file
+            async with httpx.AsyncClient(timeout=60.0) as client:
+                r = await client.get(file_url, follow_redirects=True)
+                r.raise_for_status()
+                file_data = r.content
+                content_type = r.headers.get("content-type", "")
+            # Save to temp file (CDP needs a real file path)
+            ext = ".jpg"
+            if "png" in content_type:
+                ext = ".png"
+            elif "gif" in content_type:
+                ext = ".gif"
+            elif "webp" in content_type:
+                ext = ".webp"
+            tmp = tempfile.NamedTemporaryFile(suffix=ext, delete=False)
+            tmp.write(file_data)
+            tmp.close()
+
+            # Find the file input and set the file
+            node_id = await self.query_selector(selector, tab_id=tab_id)
+            if not node_id:
+                os.unlink(tmp.name)
+                return {"error": "File input not found"}
+            await self.send_command("DOM.focus", {"nodeId": node_id}, tab_id=tab_id)
+            # Set file on the input using DOM.setFileInputFiles
+            result = await self.send_command("DOM.setFileInputFiles", {
+                "files": [tmp.name],
+                "nodeId": node_id,
+            }, tab_id=tab_id)
+            # Cleanup temp file
+            os.unlink(tmp.name)
+        return {"status": "uploaded", "url": file_url, "size": len(file_data)}
+
 
 # Global instance
 cdp = CDPBridge()

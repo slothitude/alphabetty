@@ -90,6 +90,42 @@ class TabIdRequest(BaseModel):
     target_id: str
 
 
+class RawCDPRequest(BaseModel):
+    method: str
+    params: dict = {}
+    tab_id: Optional[str] = None
+
+
+class InsertTextRequest(BaseModel):
+    text: str
+    tab_id: Optional[str] = None
+
+
+class ClickAtRequest(BaseModel):
+    x: float
+    y: float
+    tab_id: Optional[str] = None
+
+
+class IframeRequest(BaseModel):
+    selector: str
+    iframe_selector: str = "iframe"
+    tab_id: Optional[str] = None
+
+
+class IframeTypeRequest(BaseModel):
+    selector: str
+    text: str
+    iframe_selector: str = "iframe"
+    tab_id: Optional[str] = None
+
+
+class UploadURLRequest(BaseModel):
+    selector: str
+    file_url: str
+    tab_id: Optional[str] = None
+
+
 # ─── Tab management ───
 
 @router.get("/cdp/tabs")
@@ -203,6 +239,51 @@ async def type_text(req: TypeRequest, user: User = Depends(get_current_user)):
 async def scroll_page(req: ScrollRequest, user: User = Depends(get_current_user)):
     """Human-like scroll."""
     result = await cdp.scroll(req.x, req.y, tab_id=req.tab_id)
+    return result
+
+
+# ─── Fast / Raw CDP ───
+
+@router.post("/cdp/send")
+async def raw_cdp(req: RawCDPRequest, user: User = Depends(get_current_user)):
+    """Send any raw CDP protocol command directly."""
+    result = await cdp.send_raw(req.method, req.params, tab_id=req.tab_id)
+    return {"result": result}
+
+
+@router.post("/cdp/insert-text")
+async def insert_text(req: InsertTextRequest, user: User = Depends(get_current_user)):
+    """Insert text at cursor natively via CDP. Triggers all browser events — works with React/Vue.
+    Much faster than character-by-character type."""
+    result = await cdp.insert_text(req.text, tab_id=req.tab_id)
+    return result
+
+
+@router.post("/cdp/click-at")
+async def click_at(req: ClickAtRequest, user: User = Depends(get_current_user)):
+    """Fast mouse click at exact coordinates. No delays."""
+    result = await cdp.click_at(req.x, req.y, tab_id=req.tab_id)
+    return result
+
+
+@router.post("/cdp/click-iframe")
+async def click_iframe(req: IframeRequest, user: User = Depends(get_current_user)):
+    """Click an element inside an iframe."""
+    result = await cdp.click_iframe(req.selector, req.iframe_selector, tab_id=req.tab_id)
+    return result
+
+
+@router.post("/cdp/type-iframe")
+async def type_iframe(req: IframeTypeRequest, user: User = Depends(get_current_user)):
+    """Focus element inside an iframe and insert text natively."""
+    result = await cdp.type_iframe(req.selector, req.text, req.iframe_selector, tab_id=req.tab_id)
+    return result
+
+
+@router.post("/cdp/upload-url")
+async def upload_file_url(req: UploadURLRequest, user: User = Depends(get_current_user)):
+    """Download a file from URL and upload to a file input. No base64 needed."""
+    result = await cdp.upload_file_url(req.selector, req.file_url, tab_id=req.tab_id)
     return result
 
 
