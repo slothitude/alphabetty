@@ -1,4 +1,4 @@
-"""Torrent management — Transmission RPC proxy + SearXNG torrent search + file streaming."""
+"""Torrent management — Jackett search + Transmission RPC proxy + file streaming."""
 
 import asyncio
 import json
@@ -43,7 +43,6 @@ async def _transmission_rpc(method: str, arguments: dict = None) -> dict:
             resp = await client.post(url, json=payload, headers=headers, auth=auth)
 
             if resp.status_code == 409:
-                # CSRF token required — extract and retry
                 _session_token = resp.headers.get("X-Transmission-Session-Id", "")
                 headers["X-Transmission-Session-Id"] = _session_token
                 continue
@@ -94,26 +93,41 @@ async def add_torrent(req: TorrentAddRequest, user: User = Depends(get_current_u
 
 @router.post("/torrents/search")
 async def search_torrents(req: TorrentSearchRequest, user: User = Depends(get_current_user)):
-    """Search SearXNG for torrents. Optionally auto-add best result."""
-    searx_url = settings.searxng_url
-    search_url = f"{searx_url}/search?q={quote(req.query)}&categories=torrents&format=json"
+    """Search Jackett (behind VPN) for torrents. Optionally auto-add best result."""
+    jackett_url = settings.jackett_url
+    jackett_key = settings.jackett_api_key
 
-    async with httpx.AsyncClient(timeout=30) as client:
-        resp = await client.get(search_url)
-        resp.raise_for_status()
-        data = resp.json()
+    # Query Jackett — all indexers, sorted by seeders
+    search_url = (
+        f"{jackett_url}/api/v2.0/indexers/all/results?"
+        f"Query={quote(req.query)}&Categories=1000,2000,3000,4000,5000,6000,7000,8000"
+        f"&apikey={jackett_key}"
+    )
+
+    try:
+        async with httpx.AsyncClient(timeout=30) as client:
+            resp = await client.get(search_url)
+            resp.raise_for_status()
+            data = resp.json()
+    except Exception as e:
+        logger.warning(f"Jackett search failed: {e}")
+        raise HTTPException(502, f"Torrent search failed: {e}")
 
     results = []
-    for r in data.get("results", [])[:15]:
+    for r in data.get("Results", [])[:20]:
+        magnet = r.get("MagnetUri", "") or r.get("Link", "")
         results.append({
-            "title": r.get("title", ""),
-            "url": r.get("url", ""),
-            "magnet": r.get("magnetlink", ""),
-            "seeders": r.get("seed", ""),
-            "leechers": r.get("leech", ""),
-            "size": r.get("filesize", ""),
-            "engine": r.get("engine", ""),
+            "title": r.get("Title", ""),
+            "url": r.get("DetailsUrl", "") or r.get("Guid", ""),
+            "magnet": magnet,
+            "seeders": r.get("Seeders", 0),
+            "leechers": r.get("Peers", 0),
+            "size": _human_size(r.get("Size", 0)),
+            "engine": r.get("Indexer", ""),
         })
+
+    # Sort by seeders descending
+    results.sort(key=lambda x: x.get("seeders", 0) or 0, reverse=True)
 
     auto_added = None
     if req.auto_add and results:
@@ -143,9 +157,7 @@ async def remove_torrent(torrent_id: int, delete_files: bool = False, user: User
 
 @router.get("/torrents/stream/{torrent_id}")
 async def stream_torrent_file(torrent_id: int, user: User = Depends(get_current_user)):
-    """Stream the largest completed file from a torrent for browser playback.
-    Supports range requests for seeking."""
-    # Get torrent info with file list
+    """Stream the largest completed file from a torrent for browser playback."""
     fields = ["id", "name", "status", "percentDone", "downloadDir", "files",
                "fileStats", "totalSize"]
     data = await _transmission_rpc("torrent-get", {"ids": [torrent_id], "fields": fields})
@@ -157,13 +169,11 @@ async def stream_torrent_file(torrent_id: int, user: User = Depends(get_current_
     if torrent.get("percentDone", 0) < 1.0:
         raise HTTPException(400, f"Torrent not complete ({torrent['percentDone']*100:.0f}%)")
 
-    # Find largest file
     files = torrent.get("files", [])
-    file_stats = torrent.get("fileStats", [])
     if not files:
         raise HTTPException(404, "No files in torrent")
 
-    # Pair files with stats and find the largest
+    # Find largest file
     largest_idx = 0
     largest_size = 0
     for i, f in enumerate(files):
@@ -173,20 +183,17 @@ async def stream_torrent_file(torrent_id: int, user: User = Depends(get_current_
             largest_idx = i
 
     file_info = files[largest_idx]
-    file_name = file_info.get("name", "").split("/")[-1]  # Strip path prefix
+    file_name = file_info.get("name", "").split("/")[-1]
 
-    # Build file path: downloadDir + file name
     download_dir = torrent.get("downloadDir", settings.torrent_dir)
     file_path = Path(download_dir) / file_info.get("name", file_name)
 
     if not file_path.exists():
-        # Try just the filename in download dir
         file_path = Path(download_dir) / file_name
 
     if not file_path.exists():
         raise HTTPException(404, f"File not found: {file_name}")
 
-    # Determine content type
     ext = file_path.suffix.lower()
     content_types = {
         ".mp4": "video/mp4", ".mkv": "video/x-matroska", ".avi": "video/x-msvideo",
@@ -214,3 +221,15 @@ async def transmission_status(user: User = Depends(get_current_user)):
         }
     except Exception as e:
         return {"status": "offline", "error": str(e)}
+
+
+def _human_size(size_bytes: int) -> str:
+    """Convert bytes to human-readable size."""
+    if not size_bytes:
+        return ""
+    for unit in ["B", "KB", "MB", "GB", "TB"]:
+        if size_bytes < 1024:
+            return f"{size_bytes:.1f} {unit}"
+        size_bytes /= 1024
+    return f"{size_bytes:.1f} PB"
+

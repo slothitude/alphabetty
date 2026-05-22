@@ -55,6 +55,8 @@ services:
       - ALPHABETTY_CHROME_WINDOW_SIZE=1280,720
       - ALPHABETTY_LOW_RAM=true
       - ALPHABETTY_TRANSMISSION_URL=http://transmission-vpn:9091/transmission/rpc
+      - ALPHABETTY_JACKETT_URL=http://transmission-vpn:9117
+      - ALPHABETTY_JACKETT_API_KEY=
     deploy:
       resources:
         limits:
@@ -89,8 +91,8 @@ services:
     devices:
       - /dev/net/tun
     environment:
-      - OPENVPN_PROVIDER=CUSTOM
-      - OPENVPN_CUSTOM_CONFIG=/etc/openvpn/custom/purevpn.ovpn
+      - OPENVPN_PROVIDER=PUREVPN
+      - OPENVPN_CONFIG=nl2-auto-udp-qr
       - OPENVPN_USERNAME=purevpn0s9075328
       - OPENVPN_PASSWORD=5KLfSXhionRv3
       - LOCAL_NETWORK=172.17.0.0/16
@@ -101,10 +103,10 @@ services:
       - TRANSMISSION_RPC_PASSWORD=alphabetty
       - CREATE_TUN_DEVICE=true
     volumes:
-      - ./vpn-config:/etc/openvpn/custom:ro
       - ./torrents:/downloads
     ports:
       - "9091:9091"
+      - "9117:9117"
     restart: unless-stopped
     mem_limit: 256m
     logging:
@@ -113,9 +115,21 @@ services:
         max-size: "10m"
         max-file: "3"
 
-  searxng:
-    # SearXNG shares VPN network for torrent search access
+  jackett:
+    # Jackett torrent indexer — shares VPN tunnel with Transmission
+    image: linuxserver/jackett:latest
+    container_name: jackett
     network_mode: "service:transmission-vpn"
+    environment:
+      - PUID=1000
+      - PGID=1000
+      - AUTO_UPDATE=true
+    volumes:
+      - ./jackett-config:/config
+    restart: unless-stopped
+    mem_limit: 128m
+    depends_on:
+      - transmission-vpn
 YAML
 
 # ─── Create .env from template ───
@@ -124,47 +138,18 @@ if [ ! -f .env ]; then
 ALPHABETTY_LLM_URL=https://api.z.ai/api/coding/paas/v4/chat/completions
 ALPHABETTY_LLM_MODEL=glm-5.1
 ALPHABETTY_LLM_API_KEY=your-key-here
-ALPHABETTY_SEARXNG_URL=http://transmission-vpn:8080
+ALPHABETTY_SEARXNG_URL=http://100.84.161.63:8888
 ALPHABETTY_OLLAMA_URL=http://localhost:11434/v1/chat/completions
 ALPHABETTY_ROUTER_URL=http://localhost:4000
 ALPHABETTY_TRANSMISSION_URL=http://transmission-vpn:9091/transmission/rpc
+ALPHABETTY_JACKETT_URL=http://transmission-vpn:9117
+ALPHABETTY_JACKETT_API_KEY=
 ENV
     echo "Created .env — EDIT IT with your API keys before starting"
 fi
 
-# ─── VPN config for Transmission ───
-if [ ! -d vpn-config ]; then
-    mkdir -p vpn-config
-    # PureVPN OpenVPN config — Sydney/Melbourne servers, UDP port 53
-    cat > vpn-config/purevpn.ovpn << 'OVPN'
-client
-dev tun
-proto udp
-remote au-syd.purevpn.net 53
-remote au-mel.purevpn.net 53
-resolv-retry infinite
-nobind
-persist-key
-persist-tun
-cipher AES-256-CBC
-auth SHA256
-comp-lzo no
-route-method tap
-route-delay 2
-tun-mtu 1500
-mssfix 1450
-reneg-sec 0
-remote-cert-tls server
-auth-user-pass /etc/openvpn/custom/openvpn-credentials.txt
-verb 1
-OVPN
-    cat > vpn-config/openvpn-credentials.txt << 'CREDS'
-purevpn0s9075328
-5KLfSXhionRv3
-CREDS
-    chmod 600 vpn-config/openvpn-credentials.txt
-    echo "VPN config created (PureVPN AU servers)"
-fi
+# ─── Jackett config dir ───
+mkdir -p jackett-config
 
 # ─── Torrent download dir ───
 mkdir -p torrents/complete torrents/incomplete
