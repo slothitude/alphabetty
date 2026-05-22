@@ -2,11 +2,12 @@ import json
 import logging
 import asyncio
 import random
+from functools import wraps
 from typing import Optional
 
 import httpx
 import websockets
-from fastapi import APIRouter, WebSocket, WebSocketDisconnect, Query, Depends
+from fastapi import APIRouter, WebSocket, WebSocketDisconnect, Query, Depends, HTTPException, UploadFile, File
 from pydantic import BaseModel
 
 from config import settings
@@ -18,6 +19,56 @@ from models.user import User
 
 router = APIRouter(tags=["cdp"])
 logger = logging.getLogger(__name__)
+
+
+# ─── Structured CDP error handling ───
+
+def cdp_handler(func):
+    """Decorator that catches CDP exceptions and returns structured error codes.
+    Also enforces per-user rate limiting (60 req/min on CDP endpoints)."""
+    @wraps(func)
+    async def wrapper(*args, **kwargs):
+        # Rate limit check — extract user from kwargs (dependency injection)
+        user = kwargs.get("user")
+        if user and _rate_limited(f"cdp:{user.id}"):
+            raise HTTPException(status_code=429, detail={"error": "RATE_LIMITED", "message": "Too many CDP requests. Max 60/min."})
+
+        try:
+            result = await func(*args, **kwargs)
+            # Check for error dicts returned by CDP bridge methods
+            if isinstance(result, dict) and "error" in result and "status" not in result:
+                error_msg = result["error"]
+                code = "ELEMENT_NOT_FOUND" if "not found" in error_msg.lower() else "CDP_ERROR"
+                raise HTTPException(status_code=400, detail={"error": code, "message": error_msg})
+            return result
+        except HTTPException:
+            raise
+        except TimeoutError as e:
+            raise HTTPException(status_code=504, detail={"error": "CDP_TIMEOUT", "message": str(e)})
+        except (ConnectionError, httpx.ConnectError, websockets.exceptions.WebSocketException) as e:
+            raise HTTPException(status_code=503, detail={"error": "CHROME_OFFLINE", "message": str(e)})
+        except Exception as e:
+            logger.error(f"CDP error in {func.__name__}: {e}")
+            raise HTTPException(status_code=500, detail={"error": "CDP_ERROR", "message": str(e)})
+    return wrapper
+
+
+# ─── In-memory rate limiter ───
+
+import time
+from collections import defaultdict
+
+_rate_windows: dict[str, list[float]] = defaultdict(list)
+
+def _rate_limited(key: str, max_requests: int = 60, window_sec: int = 60) -> bool:
+    """Returns True if rate limit exceeded."""
+    now = time.time()
+    cutoff = now - window_sec
+    _rate_windows[key] = [t for t in _rate_windows[key] if t > cutoff]
+    if len(_rate_windows[key]) >= max_requests:
+        return True
+    _rate_windows[key].append(now)
+    return False
 
 
 class NavigateRequest(BaseModel):
@@ -188,6 +239,7 @@ async def chrome_status(user: User = Depends(get_current_user)):
 # ─── Navigation ───
 
 @router.post("/cdp/navigate")
+@cdp_handler
 async def navigate(req: NavigateRequest, user: User = Depends(get_current_user)):
     result = await cdp.navigate(req.url, tab_id=req.tab_id)
     return {"status": "ok", "result": result}
@@ -222,6 +274,7 @@ async def evaluate(req: EvaluateRequest, user: User = Depends(get_current_user))
 # ─── Human-like interactions ───
 
 @router.post("/cdp/click")
+@cdp_handler
 async def click_element(req: ClickRequest, user: User = Depends(get_current_user)):
     """Human-like click with random offset and timing."""
     result = await cdp.click(req.selector, tab_id=req.tab_id)
@@ -229,6 +282,7 @@ async def click_element(req: ClickRequest, user: User = Depends(get_current_user
 
 
 @router.post("/cdp/type")
+@cdp_handler
 async def type_text(req: TypeRequest, user: User = Depends(get_current_user)):
     """Human-like typing with random delays between keystrokes."""
     result = await cdp.type_text(req.selector, req.text, tab_id=req.tab_id)
@@ -236,6 +290,7 @@ async def type_text(req: TypeRequest, user: User = Depends(get_current_user)):
 
 
 @router.post("/cdp/scroll")
+@cdp_handler
 async def scroll_page(req: ScrollRequest, user: User = Depends(get_current_user)):
     """Human-like scroll."""
     result = await cdp.scroll(req.x, req.y, tab_id=req.tab_id)
@@ -245,6 +300,7 @@ async def scroll_page(req: ScrollRequest, user: User = Depends(get_current_user)
 # ─── Fast / Raw CDP ───
 
 @router.post("/cdp/send")
+@cdp_handler
 async def raw_cdp(req: RawCDPRequest, user: User = Depends(get_current_user)):
     """Send any raw CDP protocol command directly."""
     result = await cdp.send_raw(req.method, req.params, tab_id=req.tab_id)
@@ -252,6 +308,7 @@ async def raw_cdp(req: RawCDPRequest, user: User = Depends(get_current_user)):
 
 
 @router.post("/cdp/insert-text")
+@cdp_handler
 async def insert_text(req: InsertTextRequest, user: User = Depends(get_current_user)):
     """Insert text at cursor natively via CDP. Triggers all browser events — works with React/Vue.
     Much faster than character-by-character type."""
@@ -260,6 +317,7 @@ async def insert_text(req: InsertTextRequest, user: User = Depends(get_current_u
 
 
 @router.post("/cdp/click-at")
+@cdp_handler
 async def click_at(req: ClickAtRequest, user: User = Depends(get_current_user)):
     """Fast mouse click at exact coordinates. No delays."""
     result = await cdp.click_at(req.x, req.y, tab_id=req.tab_id)
@@ -287,9 +345,33 @@ async def upload_file_url(req: UploadURLRequest, user: User = Depends(get_curren
     return result
 
 
+@router.post("/cdp/upload-file")
+@cdp_handler
+async def upload_file(
+    selector: str = Query(...),
+    tab_id: Optional[str] = None,
+    file: UploadFile = File(...),
+    user: User = Depends(get_current_user),
+):
+    """Upload a local file to a file input via multipart form data."""
+    import tempfile, os
+    # Save uploaded file to temp location
+    suffix = os.path.splitext(file.filename or "file")[1]
+    tmp = tempfile.NamedTemporaryFile(suffix=suffix, delete=False)
+    try:
+        content = await file.read()
+        tmp.write(content)
+        tmp.close()
+        result = await cdp.upload_local_file(selector, tmp.name, tab_id=tab_id)
+    finally:
+        os.unlink(tmp.name)
+    return result
+
+
 @router.get("/cdp/screenshot")
+@cdp_handler
 async def screenshot(tab_id: Optional[str] = None, format: str = Query("png"), user: User = Depends(get_current_user)):
-    data = await cdp.screenshot(format)
+    data = await cdp.screenshot(format, tab_id=tab_id)
     from fastapi.responses import Response
     return Response(content=data, media_type=f"image/{format}")
 

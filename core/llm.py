@@ -488,7 +488,7 @@ async def stream_llm(messages: list[dict], model: str | None = None,
                         continue
                 return
     except Exception as e:
-        logger.warning(f"Primary LLM failed: {e}, falling back to Ollama")
+        logger.warning(f"Primary LLM ({mdl}) failed: {e}, falling back to Ollama ({settings.ollama_model})")
 
     try:
         ollama_payload = {
@@ -497,6 +497,7 @@ async def stream_llm(messages: list[dict], model: str | None = None,
             "max_tokens": 16384,
             "stream": False,
         }
+        logger.info(f"LLM fallback: using {settings.ollama_model} via Ollama")
         async with httpx.AsyncClient(timeout=httpx.Timeout(300.0)) as client:
             resp = await client.post(settings.ollama_url, json=ollama_payload,
                                      headers={"Content-Type": "application/json"})
@@ -506,7 +507,7 @@ async def stream_llm(messages: list[dict], model: str | None = None,
             if content:
                 yield content
     except Exception as e:
-        logger.error(f"Ollama fallback also failed: {e}")
+        logger.error(f"Ollama fallback ({settings.ollama_model}) also failed: {e}")
         yield f"[Error: All LLM providers failed — {e}]"
 
 
@@ -537,17 +538,20 @@ async def call_llm(messages: list[dict], model: str | None = None,
                 resp.raise_for_status()
                 data = resp.json()
                 msg = data["choices"][0]["message"]
+                logger.debug(f"LLM responded: {mdl} (primary)")
                 return msg.get("content", "") or msg.get("reasoning_content", "") or ""
         except Exception as e:
-            logger.warning(f"Primary LLM attempt {attempt+1} failed: {e}")
+            logger.warning(f"Primary LLM ({mdl}) attempt {attempt+1} failed: {e}")
 
     try:
         ollama_payload = {"model": settings.ollama_model, "messages": messages, "max_tokens": 16384}
+        logger.info(f"LLM fallback: using {settings.ollama_model} via Ollama")
         async with httpx.AsyncClient(timeout=httpx.Timeout(300.0)) as client:
             resp = await client.post(settings.ollama_url, json=ollama_payload,
                                      headers={"Content-Type": "application/json"})
             resp.raise_for_status()
             data = resp.json()
+            logger.debug(f"LLM responded: {settings.ollama_model} (fallback)")
             return data.get("choices", [{}])[0].get("message", {}).get("content", "")
     except Exception as e:
         logger.error(f"Ollama fallback failed: {e}")

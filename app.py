@@ -29,7 +29,40 @@ async def lifespan(app: FastAPI):
     # Run auth migrations (add user_id columns, create default users)
     from core.migrate import run_migrations
     await run_migrations(engine, async_session)
+
+    # Background tasks
+    import asyncio
+    import logging
+    _bg_logger = logging.getLogger("alphabetty.bg")
+
+    async def _chrome_health_check():
+        """Periodically check Chrome health and emit events on crash."""
+        while True:
+            await asyncio.sleep(30)
+            try:
+                from core.cdp_bridge import cdp
+                tabs = await cdp.get_tabs()
+                _bg_logger.debug(f"Chrome health: {len(tabs)} tab(s)")
+            except Exception as e:
+                _bg_logger.warning(f"Chrome health check failed: {e}")
+                from core.events import emit
+                emit("chrome.offline", {"error": str(e)})
+
+    async def _session_cleanup():
+        """Periodically clean up stale session-* users."""
+        while True:
+            await asyncio.sleep(3600)  # Every hour
+            try:
+                from api.auth import cleanup_stale_sessions
+                await cleanup_stale_sessions()
+            except Exception as e:
+                _bg_logger.warning(f"Session cleanup failed: {e}")
+
+    chrome_task = asyncio.create_task(_chrome_health_check())
+    cleanup_task = asyncio.create_task(_session_cleanup())
     yield
+    chrome_task.cancel()
+    cleanup_task.cancel()
 
 
 app = FastAPI(title="Alphabetty", lifespan=lifespan)

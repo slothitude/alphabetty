@@ -88,7 +88,15 @@ class CDPBridge:
         self.cdp_url = cdp_url or settings.cdp_url
         self._msg_id = 0
         self._stealth_injected = False
-        self._lock = asyncio.Lock()  # Serializes mutating Chrome ops
+        self._lock = asyncio.Lock()  # Global fallback lock
+        self._tab_locks: dict[str, asyncio.Lock] = {}  # Per-tab serialization
+
+    def _get_tab_lock(self, tab_id: str | None) -> asyncio.Lock:
+        """Get or create a lock for a specific tab."""
+        key = tab_id or "_default"
+        if key not in self._tab_locks:
+            self._tab_locks[key] = asyncio.Lock()
+        return self._tab_locks[key]
 
     def _next_id(self) -> int:
         self._msg_id += 1
@@ -174,7 +182,7 @@ class CDPBridge:
         """Navigate — resets stealth flag so it gets re-injected."""
         if _recorder and _recorder.recording:
             _recorder.record_step("navigate", {"url": url})
-        async with self._lock:
+        async with self._get_tab_lock(tab_id):
             self._stealth_injected = False
             result = await self.send_command("Page.navigate", {"url": url}, tab_id=tab_id)
         from core.events import emit
@@ -206,7 +214,7 @@ class CDPBridge:
     async def evaluate(self, expression: str, tab_id: str = None) -> Any:
         if _recorder and _recorder.recording:
             _recorder.record_step("evaluate", {"expression": expression})
-        async with self._lock:
+        async with self._get_tab_lock(tab_id):
             result = await self.send_command(
                 "Runtime.evaluate",
                 {"expression": expression, "returnByValue": True},
@@ -219,7 +227,7 @@ class CDPBridge:
         Falls back to JS click() for shadow DOM elements."""
         if _recorder and _recorder.recording:
             _recorder.record_step("click", {"selector": selector})
-        async with self._lock:
+        async with self._get_tab_lock(tab_id):
             node_id = await self.query_selector(selector, tab_id=tab_id)
             if not node_id:
                 # Fallback: try JS click for shadow DOM / dynamic elements
@@ -266,7 +274,7 @@ class CDPBridge:
         uses JS injection to avoid doubled characters from keyDown+char events."""
         if _recorder and _recorder.recording:
             _recorder.record_step("type", {"selector": selector, "text": text})
-        async with self._lock:
+        async with self._get_tab_lock(tab_id):
             node_id = await self.query_selector(selector, tab_id=tab_id)
 
             # Check if element needs JS injection (contenteditable, ProseMirror, or rich-textarea)
@@ -321,7 +329,7 @@ class CDPBridge:
         """Human-like scroll."""
         if _recorder and _recorder.recording:
             _recorder.record_step("scroll", {"x": x, "y": y})
-        async with self._lock:
+        async with self._get_tab_lock(tab_id):
             await self.send_command("Input.dispatchMouseEvent", {
                 "type": "mouseWheel",
                 "x": 0, "y": 0,
@@ -358,7 +366,7 @@ class CDPBridge:
         interval = 0.3
         elapsed = 0.0
         while elapsed < timeout / 1000.0:
-            async with self._lock:
+            async with self._get_tab_lock(tab_id):
                 node_id = await self.query_selector(selector, tab_id=tab_id)
                 if node_id:
                     return {"status": "found", "selector": selector, "waited_ms": int(elapsed * 1000)}
@@ -376,7 +384,7 @@ class CDPBridge:
     async def print_pdf(self, tab_id: str = None) -> dict:
         """Print the current page as a PDF (base64-encoded)."""
         import base64
-        async with self._lock:
+        async with self._get_tab_lock(tab_id):
             result = await self.send_command("Page.printToPDF", {
                 "printBackground": True,
                 "paperWidth": 8.5,
@@ -431,7 +439,7 @@ class CDPBridge:
         Much faster than character-by-character type_text."""
         if _recorder and _recorder.recording:
             _recorder.record_step("insert_text", {"text": text})
-        async with self._lock:
+        async with self._get_tab_lock(tab_id):
             result = await self.send_command("Input.insertText", {"text": text}, tab_id=tab_id)
         return {"status": "inserted", "text": text}
 
@@ -439,7 +447,7 @@ class CDPBridge:
         """Fast CDP mouse click at exact coordinates. No human-like delays."""
         if _recorder and _recorder.recording:
             _recorder.record_step("click_at", {"x": x, "y": y})
-        async with self._lock:
+        async with self._get_tab_lock(tab_id):
             await self.send_command("Input.dispatchMouseEvent", {
                 "type": "mousePressed", "x": x, "y": y,
                 "button": "left", "clickCount": 1,
@@ -454,7 +462,7 @@ class CDPBridge:
                            tab_id: str = None) -> dict:
         """Click an element inside an iframe. Gets iframe's document,
         queries element within it, and clicks at its coordinates."""
-        async with self._lock:
+        async with self._get_tab_lock(tab_id):
             # Get iframe content document and click coordinates
             js = (
                 f'(function(){{'
@@ -493,7 +501,7 @@ class CDPBridge:
     async def type_iframe(self, selector: str, text: str, iframe_selector: str = "iframe",
                           tab_id: str = None) -> dict:
         """Click into an element inside an iframe, then insert text natively."""
-        async with self._lock:
+        async with self._get_tab_lock(tab_id):
             # Focus the element in the iframe
             js = (
                 f'(function(){{'
@@ -524,7 +532,7 @@ class CDPBridge:
         import httpx
         import tempfile
         import os
-        async with self._lock:
+        async with self._get_tab_lock(tab_id):
             # Download the file
             async with httpx.AsyncClient(timeout=60.0) as client:
                 r = await client.get(file_url, follow_redirects=True)
@@ -557,6 +565,21 @@ class CDPBridge:
             # Cleanup temp file
             os.unlink(tmp.name)
         return {"status": "uploaded", "url": file_url, "size": len(file_data)}
+
+    async def upload_local_file(self, selector: str, file_path: str, tab_id: str = None) -> dict:
+        """Upload a local file (already on disk) to a file input via DOM.setFileInputFiles."""
+        import os
+        async with self._get_tab_lock(tab_id):
+            node_id = await self.query_selector(selector, tab_id=tab_id)
+            if not node_id:
+                return {"error": "File input not found"}
+            await self.send_command("DOM.focus", {"nodeId": node_id}, tab_id=tab_id)
+            await self.send_command("DOM.setFileInputFiles", {
+                "files": [file_path],
+                "nodeId": node_id,
+            }, tab_id=tab_id)
+        size = os.path.getsize(file_path)
+        return {"status": "uploaded", "path": file_path, "size": size}
 
 
 # Global instance

@@ -1,5 +1,6 @@
 import logging
 import re
+import time
 
 import httpx
 from bs4 import BeautifulSoup
@@ -9,9 +10,20 @@ logger = logging.getLogger(__name__)
 MAX_CONTENT_LENGTH = 50000
 USER_AGENT = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
 
+# Simple TTL cache: url -> (timestamp, result)
+_cache: dict[str, tuple[float, dict]] = {}
+_CACHE_TTL = 1800  # 30 minutes
+
 
 async def fetch_and_extract(url: str, max_length: int = MAX_CONTENT_LENGTH) -> dict:
-    """Fetch a URL and extract clean text content."""
+    """Fetch a URL and extract clean text content. Results cached for 30 min."""
+    # Check cache
+    if url in _cache:
+        ts, cached = _cache[url]
+        if time.time() - ts < _CACHE_TTL:
+            logger.debug(f"Cache hit: {url[:80]}")
+            return cached
+
     try:
         async with httpx.AsyncClient(
             timeout=httpx.Timeout(20.0),
@@ -25,7 +37,9 @@ async def fetch_and_extract(url: str, max_length: int = MAX_CONTENT_LENGTH) -> d
         logger.warning(f"Failed to fetch {url}: {e}")
         return {"url": url, "title": "", "text": "", "error": str(e)}
 
-    return extract_content(html, url)
+    result = extract_content(html, url)
+    _cache[url] = (time.time(), result)
+    return result
 
 
 def extract_content(html: str, url: str = "") -> dict:

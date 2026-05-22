@@ -142,6 +142,26 @@ async def me(user: User = Depends(get_current_user)):
     return user.to_dict()
 
 
+@router.post("/auth/refresh")
+async def refresh_token(request: Request, user: User = Depends(get_current_user)):
+    """Refresh JWT — issues a new token if current one is valid.
+    Clients should call this before token expiry to stay logged in."""
+    token = create_access_token(user)
+    response = Response(
+        content=json.dumps({"ok": True, "expires_in": settings.jwt_expire_hours * 3600}),
+        media_type="application/json",
+    )
+    response.set_cookie(
+        key="access_token",
+        value=token,
+        httponly=True,
+        max_age=settings.jwt_expire_hours * 3600,
+        samesite="lax",
+        secure=_cookie_secure(request),
+    )
+    return response
+
+
 # ─── API Keys ───
 
 @router.post("/auth/keys")
@@ -272,3 +292,24 @@ async def release_session(user: User = Depends(get_current_user), db=Depends(get
     await db.delete(user)
     await db.commit()
     return {"ok": True, "released": user.id}
+
+
+# ─── Session TTL cleanup (background task) ───
+
+async def cleanup_stale_sessions():
+    """Delete session-* users older than 24 hours. Called periodically."""
+    from sqlalchemy import delete
+    cutoff = datetime.now(timezone.utc) - __import__('datetime').timedelta(hours=24)
+    from app import async_session
+    async with async_session() as db:
+        result = await db.execute(
+            delete(User).where(
+                User.username.startswith("session-"),
+                User.created_at < cutoff,
+            )
+        )
+        await db.commit()
+        count = result.rowcount
+        if count:
+            import logging
+            logging.getLogger(__name__).info(f"Cleaned up {count} stale session(s)")
