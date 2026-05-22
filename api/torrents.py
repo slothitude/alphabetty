@@ -37,7 +37,7 @@ async def _jackett_login() -> None:
     base = settings.jackett_url
     password = settings.jackett_api_key  # reused as admin password for linuxserver image
 
-    async with httpx.AsyncClient(timeout=15, base_url=base, follow_redirects=True) as c:
+    async with httpx.AsyncClient(timeout=60, base_url=base, follow_redirects=True) as c:
         # GET /UI/Login follows redirects, sets TestCookie + Jackett session cookie
         await c.get("/UI/Login")
         # POST login ensures session is valid
