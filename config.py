@@ -35,6 +35,12 @@ class Settings(BaseSettings):
     demo_password: str = "demo"
     bootstrap_token: str = "alphabetty-bootstrap-secret"
 
+    # Transmission (torrent)
+    transmission_url: str = "http://localhost:9091/transmission/rpc"
+    transmission_user: str = "admin"
+    transmission_pass: str = "alphabetty"
+    torrent_dir: str = "/downloads"
+
     # Agent bridge — comma-separated "name=url" pairs for outbound agent calling
     agent_endpoints: str = ""
 

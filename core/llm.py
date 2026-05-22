@@ -200,6 +200,46 @@ AGENT_TOOLS = [
     {
         "type": "function",
         "function": {
+            "name": "video_play",
+            "description": "Play any video from a URL (YouTube, Facebook, X/Twitter, Instagram, TikTok, etc.). Uses yt-dlp to extract a direct stream. Returns type (youtube/direct), stream URL, and metadata.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "url": {"type": "string", "description": "Video URL to play (any platform)"},
+                },
+                "required": ["url"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "torrent_search",
+            "description": "Search for torrents via SearXNG. Returns results with magnet links, seeders, and file sizes. Optionally auto-adds the best result to Transmission for downloading.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "query": {"type": "string", "description": "Search query for torrents"},
+                    "auto_add": {"type": "boolean", "description": "Automatically add best result to Transmission (default false)", "default": False},
+                },
+                "required": ["query"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "torrent_list",
+            "description": "List all active torrents in Transmission with download progress, speeds, and status.",
+            "parameters": {
+                "type": "object",
+                "properties": {},
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
             "name": "macro_record",
             "description": "Start recording a macro of browser interactions. Give it a name and optional starting URL.",
             "parameters": {
@@ -390,7 +430,12 @@ AGENT_SYSTEM = """You are Alphabetty, an autonomous AI research agent with full 
 
 ### Media
 - **youtube_play(query)** — Search YouTube and play a video in Chrome
+- **video_play(url)** — Play any video URL (YouTube, Facebook, X, Instagram, TikTok, etc.)
 - **print_pdf()** — Print the current page as PDF
+
+### Torrents
+- **torrent_search(query, auto_add)** — Search SearXNG for torrents, optionally add to Transmission
+- **torrent_list()** — List active torrents with progress
 
 ### Delegation
 - **delegate(task, agent)** — Delegate a sub-task to another agent
@@ -558,7 +603,7 @@ async def call_llm(messages: list[dict], model: str | None = None,
         return f"[Error: All LLM providers failed]"
 
 
-async def call_llm_with_tools(messages: list[dict]) -> dict:
+async def call_llm_with_tools(messages: list[dict], tools: list[dict] | None = None) -> dict:
     """Non-streaming LLM call with tool support. Returns full response with tool_calls."""
     url = settings.llm_url
     key = settings.llm_api_key
@@ -568,7 +613,7 @@ async def call_llm_with_tools(messages: list[dict]) -> dict:
         "model": mdl,
         "messages": messages,
         "max_tokens": 16384,
-        "tools": AGENT_TOOLS,
+        "tools": tools or AGENT_TOOLS,
         "tool_choice": "auto",
         "stream": False,
     }
@@ -582,3 +627,222 @@ async def call_llm_with_tools(messages: list[dict]) -> dict:
         resp.raise_for_status()
         data = resp.json()
         return data["choices"][0]
+
+
+# ─── Smart Tool Routing ───
+
+# Tool groups: core tools are always included, extras are activated by keyword match
+_TOOL_GROUPS = {
+    "core": {
+        "search", "browse", "extract", "click", "type_text", "screenshot",
+        "scroll", "wait_for", "tab_list", "tab_new", "delegate",
+    },
+    "media": {
+        "youtube_play", "video_play",
+    },
+    "torrent": {
+        "torrent_search", "torrent_list",
+    },
+    "macro": {
+        "macro_record", "macro_stop", "macro_play",
+    },
+    "signin": {
+        "signin_start", "signin_2fa", "signin_auto",
+    },
+    "utility": {
+        "print_pdf",
+    },
+}
+
+# Keyword → group mapping for intent detection
+_INTENT_KEYWORDS = {
+    "media": [
+        "play", "video", "watch", "youtube", "yt", "music", "song", "movie", "clip",
+        "stream", "listen", "audio", "facebook video", "instagram video", "tiktok",
+        "x video", "twitter video", "embed",
+    ],
+    "torrent": [
+        "torrent", "download", "magnet", "seed", "leech", "pirate", "tracker",
+        "torrents", "transmission", "iso", "linux iso",
+    ],
+    "macro": [
+        "macro", "record", "replay", "automate", "repeat",
+    ],
+    "signin": [
+        "sign in", "login", "log in", "authenticate", "2fa", "totp", "credential",
+        "password", "signin",
+    ],
+    "utility": [
+        "pdf", "print", "export",
+    ],
+}
+
+# Pre-built lookup: tool_name → tool definition
+_TOOL_BY_NAME: dict[str, dict] = {}
+
+
+def _init_tool_index():
+    """Build name→tool lookup on first call."""
+    if _TOOL_BY_NAME:
+        return
+    for t in AGENT_TOOLS:
+        name = t.get("function", {}).get("name", "")
+        if name:
+            _TOOL_BY_NAME[name] = t
+
+
+def select_tools(query: str, history: list[dict] | None = None) -> list[dict]:
+    """Select the minimal tool subset based on query intent.
+
+    Always includes core tools. Adds group-specific tools when keywords match.
+    Also scans recent conversation history for sustained intent.
+    Returns the tool definitions list for the LLM.
+    """
+    _init_tool_index()
+
+    # Gather all text to scan: query + last few user messages
+    text = query.lower()
+    if history:
+        for msg in history[-4:]:
+            if msg.get("role") == "user":
+                text += " " + (msg.get("content", "") or "").lower()
+
+    # Determine which groups to activate
+    active_groups = {"core"}
+    for group, keywords in _INTENT_KEYWORDS.items():
+        for kw in keywords:
+            if kw in text:
+                active_groups.add(group)
+                break
+
+    # Collect tool names from active groups
+    tool_names = set()
+    for group in active_groups:
+        tool_names.update(_TOOL_GROUPS.get(group, set()))
+
+    # Build the tools list, preserving original order
+    selected = []
+    for t in AGENT_TOOLS:
+        name = t.get("function", {}).get("name", "")
+        if name in tool_names:
+            selected.append(t)
+
+    logger.info(f"Tool routing: {len(selected)}/{len(AGENT_TOOLS)} tools selected "
+                f"(groups: {active_groups}) for query: {query[:60]}")
+    return selected
+
+
+def build_system_prompt(tools: list[dict]) -> str:
+    """Build AGENT_SYSTEM with only the available tools documented."""
+    available = {t["function"]["name"] for t in tools}
+
+    sections = []
+    sections.append("""You are Alphabetty, an autonomous AI research agent with full web browsing and automation capabilities.
+
+## Available Tools""")
+
+    # Research section — always present (core)
+    research_tools = []
+    if "search" in available:
+        research_tools.append("- **search(query)** — Search the web via SearXNG")
+    if "browse" in available:
+        research_tools.append("- **browse(url)** — Navigate to a URL and extract page text")
+    if "extract" in available:
+        research_tools.append("- **extract(selector)** — Extract text from a specific CSS selector")
+    if "screenshot" in available:
+        research_tools.append("- **screenshot()** — Take a screenshot to see the current page")
+
+    if research_tools:
+        sections.append("### Research\n" + "\n".join(research_tools))
+
+    interaction_tools = []
+    if "click" in available:
+        interaction_tools.append("- **click(selector)** — Click an element on the current page")
+    if "type_text" in available:
+        interaction_tools.append("- **type_text(selector, text)** — Type into an input field")
+    if "scroll" in available:
+        interaction_tools.append("- **scroll(direction, amount)** — Scroll the page up or down")
+    if "wait_for" in available:
+        interaction_tools.append("- **wait_for(selector, timeout)** — Wait for an element to appear")
+
+    if interaction_tools:
+        sections.append("### Interaction\n" + "\n".join(interaction_tools))
+
+    tab_tools = []
+    if "tab_list" in available:
+        tab_tools.append("- **tab_list()** — List all open Chrome tabs")
+    if "tab_new" in available:
+        tab_tools.append("- **tab_new(url)** — Open a new tab and navigate to URL")
+
+    if tab_tools:
+        sections.append("### Tab Management\n" + "\n".join(tab_tools))
+
+    # Optional sections
+    macro_tools = []
+    if "macro_record" in available:
+        macro_tools.append("- **macro_record(name, url)** — Start recording browser interactions as a macro")
+    if "macro_stop" in available:
+        macro_tools.append("- **macro_stop()** — Stop recording and save the macro")
+    if "macro_play" in available:
+        macro_tools.append("- **macro_play(macro_id)** — Replay a saved macro")
+
+    if macro_tools:
+        sections.append("### Macros & Recording\n" + "\n".join(macro_tools))
+
+    media_tools = []
+    if "youtube_play" in available:
+        media_tools.append("- **youtube_play(query)** — Search YouTube and play a video in Chrome")
+    if "video_play" in available:
+        media_tools.append("- **video_play(url)** — Play any video URL (YouTube, Facebook, X, TikTok, etc.)")
+
+    if media_tools:
+        sections.append("### Media\n" + "\n".join(media_tools))
+
+    torrent_tools = []
+    if "torrent_search" in available:
+        torrent_tools.append("- **torrent_search(query, auto_add)** — Search SearXNG for torrents, optionally add to Transmission")
+    if "torrent_list" in available:
+        torrent_tools.append("- **torrent_list()** — List active torrents with progress")
+
+    if torrent_tools:
+        sections.append("### Torrents\n" + "\n".join(torrent_tools))
+
+    signin_tools = []
+    if "signin_start" in available:
+        signin_tools.append("- **signin_start(url, username, password)** — Start sign-in flow for a website")
+    if "signin_2fa" in available:
+        signin_tools.append("- **signin_2fa(code)** — Submit 2FA code when prompted")
+    if "signin_auto" in available:
+        signin_tools.append("- **signin_auto(name)** — Auto sign-in using saved credential profile")
+
+    if signin_tools:
+        sections.append("### Sign-In\n" + "\n".join(signin_tools))
+
+    utility_tools = []
+    if "delegate" in available:
+        utility_tools.append("- **delegate(task, agent)** — Delegate a sub-task to another agent")
+    if "print_pdf" in available:
+        utility_tools.append("- **print_pdf()** — Print the current page as PDF")
+
+    if utility_tools:
+        sections.append("### Delegation\n" + "\n".join(utility_tools))
+
+    # Rules — always present
+    sections.append("""## Agent Strategy
+1. Start by searching for the user's query
+2. Browse the most relevant results to get detailed information
+3. If you need more info, search again with refined queries
+4. Click links, read pages, extract data as needed
+5. Use wait_for() after navigation to ensure page content is loaded
+6. Use tab management to work with multiple pages simultaneously
+7. Delegate sub-tasks to other agents when parallel work is needed
+8. Synthesize all findings into a comprehensive answer with citations
+
+## Rules
+- Always cite sources as [1], [2], etc.
+- Be thorough — browse at least 2-3 pages for non-trivial questions
+- If a page doesn't load or has little content, move to the next source
+- Generate 3 follow-up questions at the end in a ```followups block
+- You may make up to 15 tool calls to fully answer the question""")
+
+    return "\n\n".join(sections)

@@ -179,6 +179,10 @@ class UploadURLRequest(BaseModel):
     tab_id: Optional[str] = None
 
 
+class VideoPlayRequest(BaseModel):
+    url: str
+
+
 # ─── Tab management ───
 
 @router.get("/cdp/tabs")
@@ -525,6 +529,69 @@ async def screen_record_stop(user: User = Depends(get_current_user)):
 async def screen_record_status(user: User = Depends(get_current_user)):
     """Get current screen recording state."""
     return screen_recorder.status()
+
+
+# ─── Universal Video Player ───
+
+@router.post("/cdp/video/play")
+async def video_play(req: VideoPlayRequest, user: User = Depends(get_current_user)):
+    """Extract a direct stream URL from any video URL using yt-dlp.
+    Returns type='youtube' + video_id for YouTube, or type='direct' + stream_url for everything else."""
+    from urllib.parse import urlparse, parse_qs
+
+    url = req.url
+
+    # Quick path for YouTube — extract video_id without yt-dlp
+    parsed = urlparse(url)
+    if "youtube.com" in (parsed.hostname or "") and "v" in parse_qs(parsed.query):
+        video_id = parse_qs(parsed.query)["v"][0]
+        return {"type": "youtube", "video_id": video_id, "url": url}
+    if "youtu.be" in (parsed.hostname or ""):
+        video_id = parsed.path.strip("/")
+        return {"type": "youtube", "video_id": video_id, "url": url}
+
+    # Use yt-dlp to extract stream URL
+    def _extract():
+        import yt_dlp
+        ydl_opts = {
+            "quiet": True,
+            "no_warnings": True,
+            "format": "best[ext=mp4]/best",
+            "extract_flat": False,
+        }
+        with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+            info = ydl.extract_info(url, download=False)
+            if info:
+                # Check if it's actually YouTube
+                if info.get("extractor_key", "").lower() == "youtube":
+                    vid = info.get("id", "")
+                    return {"type": "youtube", "video_id": vid, "url": info.get("webpage_url", url)}
+                stream_url = info.get("url") or info.get("manifest_url", "")
+                return {
+                    "type": "direct",
+                    "stream_url": stream_url,
+                    "title": info.get("title", ""),
+                    "duration": info.get("duration"),
+                    "thumbnail": info.get("thumbnail", ""),
+                    "url": url,
+                }
+        return None
+
+    try:
+        result = await asyncio.get_event_loop().run_in_executor(None, _extract)
+    except Exception as e:
+        logger.warning(f"yt-dlp extraction failed for {url}: {e}")
+        result = None
+
+    if result:
+        return result
+
+    # Fallback: navigate Chrome to the URL + return MJPEG hint
+    try:
+        await cdp.navigate(url)
+        return {"type": "navigate", "url": url, "message": "Playing in Chrome viewport"}
+    except Exception as e:
+        raise HTTPException(500, f"Could not play video: {e}")
 
 
 # ─── YouTube Automation ───

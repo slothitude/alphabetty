@@ -21,7 +21,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app import async_session
 from core.auth import get_current_user
-from core.llm import AGENT_SYSTEM, call_llm, call_llm_with_tools
+from core.llm import AGENT_SYSTEM, call_llm, call_llm_with_tools, select_tools, build_system_prompt
 from core.searxng import adaptive_search as searxng_search
 from core.content_extractor import fetch_and_extract
 from core.source_citer import format_sources
@@ -74,6 +74,9 @@ async def plan_step(query: str) -> str:
 - tab_list() / tab_new(url) — manage Chrome tabs
 - macro_record(name) / macro_stop() / macro_play(id) — record & replay macros
 - youtube_play(query) — play YouTube videos
+- video_play(url) — play any video URL (YouTube, Facebook, X, TikTok, etc.)
+- torrent_search(query, auto_add) — search for torrents
+- torrent_list() — list active torrents
 - print_pdf() — print page as PDF
 - delegate(task, agent) — delegate sub-tasks to other agents
 - signin_start(url, username, password) — start sign-in flow for a website
@@ -202,6 +205,43 @@ async def execute_tool(name: str, args: dict, session: AgentSession | None = Non
             emit("youtube.playing", {"query": query_str, "video_url": video_url, "video_id": video_id})
 
             return {"tool": "youtube_play", "query": query_str, "video_url": video_url, "video_id": video_id}
+
+        elif name == "video_play":
+            import httpx as _httpx
+
+            async with _httpx.AsyncClient(timeout=60) as client:
+                resp = await client.post(
+                    "http://localhost:7700/api/cdp/video/play",
+                    json={"url": args["url"]},
+                )
+                result = resp.json()
+
+            # Emit event for frontend
+            from core.events import emit
+            emit("video.playing", result)
+
+            return {"tool": "video_play", **result}
+
+        elif name == "torrent_search":
+            import httpx as _httpx
+
+            async with _httpx.AsyncClient(timeout=15) as client:
+                resp = await client.post(
+                    "http://localhost:7700/api/torrents/search",
+                    json={"query": args["query"], "auto_add": args.get("auto_add", False)},
+                )
+                result = resp.json()
+
+            return {"tool": "torrent_search", **result}
+
+        elif name == "torrent_list":
+            import httpx as _httpx
+
+            async with _httpx.AsyncClient(timeout=15) as client:
+                resp = await client.get("http://localhost:7700/api/torrents/list")
+                result = resp.json()
+
+            return {"tool": "torrent_list", **result}
 
         elif name == "macro_record":
             from core.macro import recorder
@@ -343,6 +383,38 @@ def format_tool_result_for_llm(tool_result: dict) -> str:
             return f"YouTube play failed: {tool_result['error']}"
         return f"Now playing YouTube video: {tool_result.get('video_url', '')} (video_id: {vid})"
 
+    elif tool == "video_play":
+        vtype = tool_result.get("type", "unknown")
+        if tool_result.get("error"):
+            return f"Video play failed: {tool_result['error']}"
+        if vtype == "youtube":
+            return f"Playing YouTube video: {tool_result.get('video_id', '')}"
+        if vtype == "direct":
+            return f"Playing video: {tool_result.get('title', tool_result.get('url', ''))} (direct stream)"
+        return f"Video sent to Chrome: {tool_result.get('url', '')}"
+
+    elif tool == "torrent_search":
+        results = tool_result.get("results", [])
+        auto = tool_result.get("auto_added")
+        if not results:
+            return "No torrent results found."
+        lines = [f"Found {len(results)} torrents:"]
+        for r in results[:5]:
+            lines.append(f"  - {r.get('title', 'Unknown')} | S:{r.get('seeders', '?')} L:{r.get('leechers', '?')} | {r.get('size', '?')}")
+        if auto:
+            lines.append(f"Auto-added: {auto.get('name', '')}")
+        return "\n".join(lines)
+
+    elif tool == "torrent_list":
+        torrents = tool_result.get("torrents", [])
+        if not torrents:
+            return "No active torrents."
+        lines = [f"Active torrents ({len(torrents)}):"]
+        for t in torrents:
+            pct = t.get("percentDone", 0) * 100
+            lines.append(f"  - {t.get('name', 'Unknown')[:60]} | {pct:.0f}% | ↓{t.get('rateDownload', 0)//1024}KB/s")
+        return "\n".join(lines)
+
     elif tool == "macro_record":
         return f"Macro recording started: {tool_result.get('name', 'unnamed')}"
 
@@ -445,8 +517,12 @@ async def agent_chat(req: AgentRequest, user: User = Depends(get_current_user)):
     conv_id = conv.id
     is_first = len(history_msgs) <= 1
 
-    # Build initial messages
-    messages = [{"role": "system", "content": AGENT_SYSTEM}]
+    # Build initial messages with smart tool routing
+    history_for_routing = [{"role": m.role, "content": m.content} for m in history_msgs[-6:]]
+    selected_tools = select_tools(req.query, history=history_for_routing)
+    system_prompt = build_system_prompt(selected_tools)
+
+    messages = [{"role": "system", "content": system_prompt}]
     for m in history_msgs[-6:]:
         if m.role == "user":
             messages.append({"role": "user", "content": m.content})
@@ -477,7 +553,7 @@ async def agent_chat(req: AgentRequest, user: User = Depends(get_current_user)):
                 # Call LLM with tools
                 yield f"data: {json.dumps({'type': 'agent_thinking', 'round': round_num + 1})}\n\n"
 
-                choice = await call_llm_with_tools(messages)
+                choice = await call_llm_with_tools(messages, tools=selected_tools)
                 message = choice.get("message", {})
 
                 # Check if LLM wants to call tools
@@ -525,6 +601,11 @@ async def agent_chat(req: AgentRequest, user: User = Depends(get_current_user)):
                     sse_event = {'type': 'tool_result', 'tool': tool_name, 'summary': result_summary}
                     if tool_name == "youtube_play" and tool_result.get("video_id"):
                         sse_event["video_id"] = tool_result["video_id"]
+                    if tool_name == "video_play":
+                        sse_event["video_type"] = tool_result.get("type", "")
+                        sse_event["stream_url"] = tool_result.get("stream_url", "")
+                        sse_event["video_id"] = tool_result.get("video_id", "")
+                        sse_event["title"] = tool_result.get("title", "")
                     yield f"data: {json.dumps(sse_event)}\n\n"
 
                     messages.append({"role": "tool", "tool_call_id": tc.get("id", ""), "content": format_tool_result_for_llm(tool_result)})

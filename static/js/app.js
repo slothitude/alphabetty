@@ -9,7 +9,7 @@ const app = {
     sidebarFilter: '',
     activeTagFilter: null,
     viewportOpen: false,
-    viewportMode: null, // 'mjpeg' | 'youtube' | null
+    viewportMode: null, // 'mjpeg' | 'youtube' | 'video' | null
     activeMode: 'agent',
 
     async init() {
@@ -303,6 +303,15 @@ const app = {
             if (event.tool === 'youtube_play' && event.video_id) {
                 this.playYouTube(event.video_id);
             }
+            // Handle video_play — route to universal player
+            if (event.tool === 'video_play' && event.video_type) {
+                this.playVideo({
+                    type: event.video_type,
+                    video_id: event.video_id || '',
+                    stream_url: event.stream_url || '',
+                    title: event.title || '',
+                });
+            }
         } else if (event.type === 'reflection') {
             cls += ' reflection';
             html = `<strong>Reflect:</strong> ${this.escapeHtml((event.message || '').slice(0, 150))}`;
@@ -392,9 +401,12 @@ const app = {
         const container = document.getElementById('viewport-container');
         const img = document.getElementById('viewport-mjpeg');
         const iframe = document.getElementById('viewport-youtube');
+        const video = document.getElementById('viewport-video');
         const label = document.getElementById('viewport-label');
 
         iframe.style.display = 'none';
+        video.style.display = 'none';
+        video.src = '';
         img.style.display = 'block';
         img.src = '/api/cdp/viewport/stream?fps=6&quality=50';
         container.style.display = '';
@@ -407,11 +419,15 @@ const app = {
         const container = document.getElementById('viewport-container');
         const img = document.getElementById('viewport-mjpeg');
         const iframe = document.getElementById('viewport-youtube');
+        const video = document.getElementById('viewport-video');
 
         img.src = '';
         iframe.src = '';
+        video.pause();
+        video.src = '';
         img.style.display = 'none';
         iframe.style.display = 'none';
+        video.style.display = 'none';
         container.style.display = 'none';
         this.viewportOpen = false;
         this.viewportMode = null;
@@ -421,16 +437,51 @@ const app = {
         const container = document.getElementById('viewport-container');
         const img = document.getElementById('viewport-mjpeg');
         const iframe = document.getElementById('viewport-youtube');
+        const video = document.getElementById('viewport-video');
         const label = document.getElementById('viewport-label');
 
         img.src = '';
+        video.pause();
+        video.src = '';
         img.style.display = 'none';
+        video.style.display = 'none';
         iframe.style.display = 'block';
         iframe.src = `https://www.youtube.com/embed/${videoId}?autoplay=1&rel=0`;
         container.style.display = '';
         label.textContent = 'YouTube';
         this.viewportOpen = true;
         this.viewportMode = 'youtube';
+    },
+
+    playVideo(data) {
+        const container = document.getElementById('viewport-container');
+        const img = document.getElementById('viewport-mjpeg');
+        const iframe = document.getElementById('viewport-youtube');
+        const video = document.getElementById('viewport-video');
+        const label = document.getElementById('viewport-label');
+
+        if (data.type === 'youtube' && data.video_id) {
+            this.playYouTube(data.video_id);
+            return;
+        }
+
+        if (data.type === 'direct' && data.stream_url) {
+            img.src = '';
+            iframe.src = '';
+            iframe.style.display = 'none';
+            img.style.display = 'none';
+            video.style.display = 'block';
+            video.src = data.stream_url;
+            video.play().catch(() => {});
+            container.style.display = '';
+            label.textContent = data.title || 'Video';
+            this.viewportOpen = true;
+            this.viewportMode = 'video';
+            return;
+        }
+
+        // Fallback: just open MJPEG
+        this.startMjpegStream();
     },
 
     // ─── Slash Commands ───
@@ -1171,6 +1222,8 @@ const app = {
             signin.load(list);
         } else if (tab === 'dashboard') {
             dashboard.load(list);
+        } else if (tab === 'torrents') {
+            torrents.load(list);
         } else {
             this.renderThreadList();
         }

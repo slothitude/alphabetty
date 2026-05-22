@@ -52,6 +52,7 @@
                 <button class="nav-tab active" data-tab="chats" onclick="app.switchTab('chats')">Chats</button>
                 <button class="nav-tab" data-tab="spaces" onclick="app.switchTab('spaces')">Spaces</button>
                 <button class="nav-tab" data-tab="dashboard" onclick="app.switchTab('dashboard')">Dash</button>
+                <button class="nav-tab" data-tab="torrents" onclick="app.switchTab('torrents')">Torrents</button>
                 <button class="nav-tab" data-tab="dom" onclick="app.toggleDomPanel()">DOM</button>
                 <button class="nav-tab" data-tab="signin" onclick="app.switchTab('signin')">Auth</button>
             </div>
@@ -124,6 +125,7 @@
                 <button class="viewport-close" onclick="app.toggleViewport()">&#10005;</button>
                 <img id="viewport-mjpeg" src="" alt="" style="display:none">
                 <iframe id="viewport-youtube" src="" style="display:none" allow="autoplay; encrypted-media" allowfullscreen></iframe>
+                <video id="viewport-video" src="" style="display:none" controls autoplay></video>
             </div>
 
             <!-- Input Dock -->
@@ -203,6 +205,7 @@
 <script src="/static/js/graph.js"></script>
 <script src="/static/js/signin.js"></script>
 <script src="/static/js/dashboard.js"></script>
+<script src="/static/js/torrents.js"></script>
 
 <!-- Toast notification container -->
 <div id="toast-container"></div>

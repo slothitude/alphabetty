@@ -54,6 +54,7 @@ services:
     environment:
       - ALPHABETTY_CHROME_WINDOW_SIZE=1280,720
       - ALPHABETTY_LOW_RAM=true
+      - ALPHABETTY_TRANSMISSION_URL=http://transmission-vpn:9091/transmission/rpc
     deploy:
       resources:
         limits:
@@ -79,6 +80,42 @@ services:
           sleep 0.5
         done
         exec uvicorn app:app --host 0.0.0.0 --port 7700 --workers 1
+
+  transmission-vpn:
+    image: haugene/transmission-openvpn:latest
+    container_name: transmission-vpn
+    cap_add:
+      - NET_ADMIN
+    devices:
+      - /dev/net/tun
+    environment:
+      - OPENVPN_PROVIDER=CUSTOM
+      - OPENVPN_CUSTOM_CONFIG=/etc/openvpn/custom/purevpn.ovpn
+      - OPENVPN_USERNAME=purevpn0s9075328
+      - OPENVPN_PASSWORD=5KLfSXhionRv3
+      - LOCAL_NETWORK=172.17.0.0/16
+      - TRANSMISSION_DOWNLOAD_DIR=/downloads/complete
+      - TRANSMISSION_INCOMPLETE_DIR=/downloads/incomplete
+      - TRANSMISSION_WEB_HOME=/transmission-web
+      - TRANSMISSION_RPC_USERNAME=admin
+      - TRANSMISSION_RPC_PASSWORD=alphabetty
+      - CREATE_TUN_DEVICE=true
+    volumes:
+      - ./vpn-config:/etc/openvpn/custom:ro
+      - ./torrents:/downloads
+    ports:
+      - "9091:9091"
+    restart: unless-stopped
+    mem_limit: 256m
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+  searxng:
+    # SearXNG shares VPN network for torrent search access
+    network_mode: "service:transmission-vpn"
 YAML
 
 # ─── Create .env from template ───
@@ -87,19 +124,58 @@ if [ ! -f .env ]; then
 ALPHABETTY_LLM_URL=https://api.z.ai/api/coding/paas/v4/chat/completions
 ALPHABETTY_LLM_MODEL=glm-5.1
 ALPHABETTY_LLM_API_KEY=your-key-here
-ALPHABETTY_SEARXNG_URL=http://100.84.161.63:8888
+ALPHABETTY_SEARXNG_URL=http://transmission-vpn:8080
 ALPHABETTY_OLLAMA_URL=http://localhost:11434/v1/chat/completions
 ALPHABETTY_ROUTER_URL=http://localhost:4000
+ALPHABETTY_TRANSMISSION_URL=http://transmission-vpn:9091/transmission/rpc
 ENV
     echo "Created .env — EDIT IT with your API keys before starting"
 fi
 
+# ─── VPN config for Transmission ───
+if [ ! -d vpn-config ]; then
+    mkdir -p vpn-config
+    # PureVPN OpenVPN config — Sydney/Melbourne servers, UDP port 53
+    cat > vpn-config/purevpn.ovpn << 'OVPN'
+client
+dev tun
+proto udp
+remote au-syd.purevpn.net 53
+remote au-mel.purevpn.net 53
+resolv-retry infinite
+nobind
+persist-key
+persist-tun
+cipher AES-256-CBC
+auth SHA256
+comp-lzo no
+route-method tap
+route-delay 2
+tun-mtu 1500
+mssfix 1450
+reneg-sec 0
+remote-cert-tls server
+auth-user-pass /etc/openvpn/custom/openvpn-credentials.txt
+verb 1
+OVPN
+    cat > vpn-config/openvpn-credentials.txt << 'CREDS'
+purevpn0s9075328
+5KLfSXhionRv3
+CREDS
+    chmod 600 vpn-config/openvpn-credentials.txt
+    echo "VPN config created (PureVPN AU servers)"
+fi
+
+# ─── Torrent download dir ───
+mkdir -p torrents/complete torrents/incomplete
+
 # ─── Open firewall ───
-echo "Opening port 7700..."
+echo "Opening ports 7700, 9091..."
 sudo firewall-cmd --permanent --add-port=7700/tcp 2>/dev/null || true
+sudo firewall-cmd --permanent --add-port=9091/tcp 2>/dev/null || true
 sudo firewall-cmd --reload 2>/dev/null || true
 # Oracle Cloud also needs the security list / network security group updated in the OCI console
-echo "IMPORTANT: Also open port 7700 in OCI Console → Networking → VCN → Security Lists"
+echo "IMPORTANT: Also open ports 7700 + 9091 in OCI Console → Networking → VCN → Security Lists"
 
 echo ""
 echo "=== Setup Complete ==="

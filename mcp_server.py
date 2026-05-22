@@ -472,6 +472,49 @@ async def youtube_play(query: str) -> str:
     return json.dumps(await _post("/api/cdp/youtube", {"query": query}))
 
 
+# ─── Universal Video Player ───
+
+@mcp.tool()
+async def play_video(url: str) -> str:
+    """Play any video URL (YouTube, Facebook, X/Twitter, Instagram, TikTok, etc.).
+    Uses yt-dlp to extract a direct stream URL.
+
+    Args:
+        url: Video URL to play
+    """
+    return json.dumps(await _post("/api/cdp/video/play", {"url": url}))
+
+
+# ─── Torrents ───
+
+@mcp.tool()
+async def torrent_search(query: str, auto_add: bool = False) -> str:
+    """Search SearXNG for torrents. Returns results with magnet links, seeders, file sizes.
+    Optionally auto-adds the best result to Transmission.
+
+    Args:
+        query: Search query
+        auto_add: Automatically add best result to Transmission
+    """
+    return json.dumps(await _post("/api/torrents/search", {"query": query, "auto_add": auto_add}))
+
+
+@mcp.tool()
+async def torrent_list() -> str:
+    """List all active torrents in Transmission with download progress."""
+    return json.dumps(await _get("/api/torrents/list"))
+
+
+@mcp.tool()
+async def torrent_add(url: str) -> str:
+    """Add a magnet link or torrent URL to Transmission for downloading.
+
+    Args:
+        url: Magnet URI or .torrent URL
+    """
+    return json.dumps(await _post("/api/torrents/add", {"url": url}))
+
+
 # ─── Knowledge Graph ───
 
 @mcp.tool()
