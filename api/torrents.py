@@ -47,16 +47,17 @@ async def _jackett_client() -> httpx.AsyncClient:
     # Cookie expired — re-login
     await client.aclose()
 
-    # Step 1: get CSRF cookie
-    login_client = httpx.AsyncClient(timeout=15, base_url=base, follow_redirects=False)
-    await login_client.get("/UI/Login")
+    # Step 1: get CSRF cookie (GET /UI/Login redirects to set TestCookie)
+    login_client = httpx.AsyncClient(timeout=15, base_url=base, follow_redirects=True)
+    r1 = await login_client.get("/UI/Login")
 
-    # Step 2: login with password
-    resp = await login_client.post("/UI/Dashboard", data={"password": password})
-    cookie_header = resp.request.headers.get("Cookie", "")
-    set_cookies = [v for k, v in login_client.cookies.items()]
+    # Step 2: POST login — follow_redirects converts 302 POST→GET, which sets session cookie
+    r2 = await login_client.post("/UI/Dashboard", data={"password": password})
+
+    # Step 3: Explicit GET dashboard to ensure session cookie is collected
+    r3 = await login_client.get("/UI/Dashboard")
+
     jackett_cookie = login_client.cookies.get("Jackett")
-
     if jackett_cookie:
         _jackett_cookie = f"Jackett={jackett_cookie}"
     await login_client.aclose()
