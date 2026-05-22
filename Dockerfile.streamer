@@ -1,0 +1,17 @@
+FROM debian:bookworm-slim
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    python3 \
+    python3-libtorrent \
+    python3-pip \
+    && rm -rf /var/lib/apt/lists/*
+
+RUN pip3 install --break-system-packages --no-cache-dir \
+    fastapi uvicorn httpx
+
+WORKDIR /app
+COPY streamer.py .
+RUN mkdir -p /downloads/streaming
+
+EXPOSE 7701
+CMD ["python3", "-m", "uvicorn", "streamer:app", "--host", "0.0.0.0", "--port", "7701"]

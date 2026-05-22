@@ -17,6 +17,9 @@ from config import settings
 from core.auth import get_current_user
 from models.user import User
 
+# Check if streamer (libtorrent sidecar) is available
+STREAMER_ENABLED = bool(settings.streamer_url)
+
 router = APIRouter(tags=["torrents"])
 logger = logging.getLogger(__name__)
 
@@ -285,6 +288,101 @@ async def transmission_status(user: User = Depends(get_current_user)):
         }
     except Exception as e:
         return {"status": "offline", "error": str(e)}
+
+
+# ─── Live Streaming (libtorrent sidecar behind VPN) ───
+
+class LiveStreamRequest(BaseModel):
+    magnet: str  # Magnet URI
+
+
+@router.post("/torrents/livestream")
+async def start_livestream(req: LiveStreamRequest, user: User = Depends(get_current_user)):
+    """Start streaming a torrent via libtorrent sidecar (sequential download, no waiting for completion)."""
+    if not STREAMER_ENABLED:
+        raise HTTPException(503, "Streamer sidecar not configured")
+
+    try:
+        async with httpx.AsyncClient(timeout=httpx.Timeout(connect=10, read=120)) as client:
+            resp = await client.post(
+                f"{settings.streamer_url}/add",
+                params={"magnet": req.magnet},
+            )
+            resp.raise_for_status()
+            data = resp.json()
+    except httpx.ConnectError:
+        raise HTTPException(503, "Streamer sidecar offline")
+    except httpx.HTTPStatusError as e:
+        detail = e.response.text if e.response else str(e)
+        raise HTTPException(502, f"Streamer error: {detail}")
+    except Exception as e:
+        raise HTTPException(502, f"Streamer error: {e}")
+
+    return {
+        "status": "streaming",
+        "info_hash": data.get("info_hash", ""),
+        "file_name": data.get("file_name", ""),
+        "file_size": data.get("file_size", 0),
+    }
+
+
+@router.get("/torrents/livestream/{info_hash:path}")
+async def livestream_proxy(info_hash: str, request: Request):
+    """Proxy stream from libtorrent sidecar to browser. Supports HTTP range requests."""
+    if not STREAMER_ENABLED:
+        raise HTTPException(503, "Streamer sidecar not configured")
+
+    # Forward range headers
+    headers = {}
+    if "range" in request.headers:
+        headers["range"] = request.headers["range"]
+
+    client = httpx.AsyncClient(timeout=httpx.Timeout(connect=10, read=300, write=10, pool=10))
+    try:
+        req = client.build_request(
+            "GET",
+            f"{settings.streamer_url}/watch/{info_hash}",
+            headers=headers,
+        )
+        resp = await client.send(req, stream=True)
+    except httpx.ConnectError:
+        await client.aclose()
+        raise HTTPException(503, "Streamer sidecar offline")
+
+    # Build response headers from streamer
+    resp_headers = {}
+    for h in ["content-range", "accept-ranges", "content-length", "content-type"]:
+        if h in resp.headers:
+            resp_headers[h] = resp.headers[h]
+
+    async def body():
+        try:
+            async for chunk in resp.aiter_bytes(chunk_size=65536):
+                yield chunk
+        finally:
+            await resp.aclose()
+            await client.aclose()
+
+    return StreamingResponse(
+        body(),
+        status_code=resp.status_code,
+        headers=resp_headers,
+    )
+
+
+@router.get("/torrents/livestream/{info_hash:path}/status")
+async def livestream_status(info_hash: str, user: User = Depends(get_current_user)):
+    """Get download progress for a live-streaming torrent."""
+    if not STREAMER_ENABLED:
+        raise HTTPException(503, "Streamer sidecar not configured")
+
+    try:
+        async with httpx.AsyncClient(timeout=10) as client:
+            resp = await client.get(f"{settings.streamer_url}/status/{info_hash}")
+            resp.raise_for_status()
+            return resp.json()
+    except Exception as e:
+        raise HTTPException(502, f"Streamer error: {e}")
 
 
 def _human_size(size_bytes: int) -> str:

@@ -473,10 +473,11 @@ AGENT_SYSTEM = """You are Alphabetty, an autonomous AI research agent with full 
 ## Torrent Workflow
 When a user wants to download or stream something:
 1. Use torrent_search to find results — show top results with title, size, and seeders
-2. Before adding, tell the user the file size and that streaming will be available once download completes
-3. Use torrent_add or auto_add=true to start the download
-4. Use torrent_list to check progress — report percent done, download speed, and ETA
-5. Let the user know when the download is complete and they can stream it
+2. Tell the user the file size — they can either stream immediately (sequential download) or add to Transmission for full download
+3. For streaming: tell the user to click the Stream button on the result — video starts playing while downloading
+4. For downloading: use torrent_add or auto_add=true to add to Transmission
+5. Use torrent_list to check progress — report percent done, download speed, and ETA
+6. Let the user know when the download is complete and they can stream it
 
 ## Rules
 - Always cite sources as [1], [2], etc.
@@ -866,10 +867,11 @@ def build_system_prompt(tools: list[dict]) -> str:
 ## Torrent Workflow
 When a user wants to download or stream something:
 1. Use torrent_search to find results — show top results with title, size, and seeders
-2. Before adding, tell the user the file size and that streaming will be available once download completes
-3. Use torrent_add or auto_add=true to start the download
-4. Use torrent_list to check progress — report percent done, download speed, and ETA
-5. Let the user know when the download is complete and they can stream it
+2. Tell the user the file size — they can either stream immediately (sequential download) or add to Transmission for full download
+3. For streaming: tell the user to click the Stream button on the result — video starts playing while downloading
+4. For downloading: use torrent_add or auto_add=true to add to Transmission
+5. Use torrent_list to check progress — report percent done, download speed, and ETA
+6. Let the user know when the download is complete and they can stream it
 
 ## Rules
 - Always cite sources as [1], [2], etc.

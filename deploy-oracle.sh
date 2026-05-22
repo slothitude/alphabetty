@@ -57,6 +57,7 @@ services:
       - ALPHABETTY_TRANSMISSION_URL=http://transmission-vpn:9091/transmission/rpc
       - ALPHABETTY_JACKETT_URL=http://transmission-vpn:9117
       - ALPHABETTY_JACKETT_API_KEY=
+      - ALPHABETTY_STREAMER_URL=http://transmission-vpn:7701
     deploy:
       resources:
         limits:
@@ -107,6 +108,7 @@ services:
     ports:
       - "9091:9091"
       - "9117:9117"
+      - "7701:7701"
     restart: unless-stopped
     mem_limit: 256m
     logging:
@@ -130,6 +132,23 @@ services:
     mem_limit: 128m
     depends_on:
       - transmission-vpn
+
+  streamer:
+    # libtorrent sequential downloader — streams video while downloading behind VPN
+    build:
+      context: /opt/alphabetty
+      dockerfile: Dockerfile.streamer
+    container_name: streamer
+    network_mode: "service:transmission-vpn"
+    environment:
+      - STREAMER_DOWNLOAD_DIR=/downloads/streaming
+      - STREAMER_PORT=7701
+    volumes:
+      - ./torrents:/downloads
+    restart: unless-stopped
+    mem_limit: 128m
+    depends_on:
+      - transmission-vpn
 YAML
 
 # ─── Create .env from template ───
@@ -144,6 +163,7 @@ ALPHABETTY_ROUTER_URL=http://localhost:4000
 ALPHABETTY_TRANSMISSION_URL=http://transmission-vpn:9091/transmission/rpc
 ALPHABETTY_JACKETT_URL=http://transmission-vpn:9117
 ALPHABETTY_JACKETT_API_KEY=
+ALPHABETTY_STREAMER_URL=http://transmission-vpn:7701
 ENV
     echo "Created .env — EDIT IT with your API keys before starting"
 fi
@@ -152,7 +172,7 @@ fi
 mkdir -p jackett-config
 
 # ─── Torrent download dir ───
-mkdir -p torrents/complete torrents/incomplete
+mkdir -p torrents/complete torrents/incomplete torrents/streaming
 
 # ─── Open firewall ───
 echo "Opening ports 7700, 9091..."
@@ -174,4 +194,5 @@ echo "Memory usage estimate:"
 echo "  Chrome:    ~300-500MB"
 echo "  Xvfb:      ~20MB"
 echo "  FastAPI:   ~80MB"
-echo "  Total:     ~400-600MB (with 4GB swap as safety net)"
+echo "  Streamer:  ~40MB"
+echo "  Total:     ~440-640MB (with 4GB swap as safety net)"

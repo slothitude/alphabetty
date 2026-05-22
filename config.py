@@ -45,6 +45,9 @@ class Settings(BaseSettings):
     jackett_url: str = "http://localhost:9117"
     jackett_api_key: str = ""  # Also used as admin password for linuxserver/jackett
 
+    # Torrent streamer (libtorrent sidecar behind VPN, sequential download + HTTP streaming)
+    streamer_url: str = "http://localhost:7701"
+
     # Agent bridge — comma-separated "name=url" pairs for outbound agent calling
     agent_endpoints: str = ""
 

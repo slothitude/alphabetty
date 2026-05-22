@@ -97,6 +97,7 @@ const torrents = {
                             <span>${r.engine || ''}</span>
                         </div>
                         <div class="torrent-actions">
+                            <button onclick="torrents.livestream('${app.escapeHtml(r.magnet)}')">&#9654; Stream</button>
                             <button onclick="torrents.addLink('${app.escapeHtml(r.magnet || r.url)}')">&#10010; Add</button>
                         </div>
                     </div>
@@ -143,16 +144,34 @@ const torrents = {
     },
 
     async stream(torrentId) {
+        // Set video src directly — FileResponse handles range requests natively
+        app.playVideo({ type: 'direct', stream_url: `/api/torrents/stream/${torrentId}`, title: 'Torrent Stream' });
+    },
+
+    async livestream(magnet) {
         try {
-            const resp = await fetch(`/api/torrents/stream/${torrentId}`);
-            if (!resp.ok) {
-                const err = await resp.json().catch(() => ({ detail: 'Stream failed' }));
+            app.showToast('Starting stream...', 'info');
+            const r = await fetch('/api/torrents/livestream', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ magnet }),
+            });
+            if (!r.ok) {
+                const err = await r.json().catch(() => ({ detail: 'Stream failed' }));
                 app.showToast(err.detail || 'Stream failed', 'error');
                 return;
             }
-            const blob = await resp.blob();
-            const url = URL.createObjectURL(blob);
-            app.playVideo({ type: 'direct', stream_url: url, title: 'Torrent Stream' });
+            const d = await r.json();
+            const sizeStr = d.file_size > 1073741824
+                ? `${(d.file_size / 1073741824).toFixed(1)} GB`
+                : `${(d.file_size / 1048576).toFixed(0)} MB`;
+            app.showToast(`Streaming: ${d.file_name} (${sizeStr})`, 'success');
+            // Set video src to proxy endpoint — handles range requests for seeking
+            app.playVideo({
+                type: 'direct',
+                stream_url: `/api/torrents/livestream/${d.info_hash}`,
+                title: d.file_name || 'Live Stream',
+            });
         } catch (e) {
             app.showToast(`Stream failed: ${e.message}`, 'error');
         }
