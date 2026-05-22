@@ -54,10 +54,7 @@ services:
     environment:
       - ALPHABETTY_CHROME_WINDOW_SIZE=1280,720
       - ALPHABETTY_LOW_RAM=true
-      - ALPHABETTY_TRANSMISSION_URL=http://transmission-vpn:9091/transmission/rpc
-      - ALPHABETTY_JACKETT_URL=http://transmission-vpn:9117
-      - ALPHABETTY_JACKETT_API_KEY=
-      - ALPHABETTY_STREAMER_URL=http://transmission-vpn:7701
+      - ALPHABETTY_SEARXNG_URL=http://host.docker.internal:8888
     deploy:
       resources:
         limits:
@@ -83,72 +80,6 @@ services:
           sleep 0.5
         done
         exec uvicorn app:app --host 0.0.0.0 --port 7700 --workers 1
-
-  transmission-vpn:
-    image: haugene/transmission-openvpn:latest
-    container_name: transmission-vpn
-    cap_add:
-      - NET_ADMIN
-    devices:
-      - /dev/net/tun
-    environment:
-      - OPENVPN_PROVIDER=PUREVPN
-      - OPENVPN_CONFIG=nl2-auto-udp-qr
-      - OPENVPN_USERNAME=purevpn0s9075328
-      - OPENVPN_PASSWORD=5KLfSXhionRv3
-      - LOCAL_NETWORK=172.17.0.0/16
-      - TRANSMISSION_DOWNLOAD_DIR=/downloads/complete
-      - TRANSMISSION_INCOMPLETE_DIR=/downloads/incomplete
-      - TRANSMISSION_WEB_HOME=/transmission-web
-      - TRANSMISSION_RPC_USERNAME=admin
-      - TRANSMISSION_RPC_PASSWORD=alphabetty
-      - CREATE_TUN_DEVICE=true
-    volumes:
-      - ./torrents:/downloads
-    ports:
-      - "9091:9091"
-      - "9117:9117"
-      - "7701:7701"
-    restart: unless-stopped
-    mem_limit: 256m
-    logging:
-      driver: json-file
-      options:
-        max-size: "10m"
-        max-file: "3"
-
-  jackett:
-    # Jackett torrent indexer — shares VPN tunnel with Transmission
-    image: jackett/jackett:latest
-    container_name: jackett
-    network_mode: "service:transmission-vpn"
-    environment:
-      - PUID=1000
-      - PGID=1000
-      - AUTO_UPDATE=true
-    volumes:
-      - ./jackett-config:/config
-    restart: unless-stopped
-    mem_limit: 128m
-    depends_on:
-      - transmission-vpn
-
-  streamer:
-    # libtorrent sequential downloader — streams video while downloading behind VPN
-    build:
-      context: /opt/alphabetty
-      dockerfile: Dockerfile.streamer
-    container_name: streamer
-    network_mode: "service:transmission-vpn"
-    environment:
-      - STREAMER_DOWNLOAD_DIR=/downloads/streaming
-      - STREAMER_PORT=7701
-    volumes:
-      - ./torrents:/downloads
-    restart: unless-stopped
-    mem_limit: 128m
-    depends_on:
-      - transmission-vpn
 YAML
 
 # ─── Create .env from template ───
@@ -157,30 +88,19 @@ if [ ! -f .env ]; then
 ALPHABETTY_LLM_URL=https://api.z.ai/api/coding/paas/v4/chat/completions
 ALPHABETTY_LLM_MODEL=glm-5.1
 ALPHABETTY_LLM_API_KEY=your-key-here
-ALPHABETTY_SEARXNG_URL=http://100.84.161.63:8888
+ALPHABETTY_SEARXNG_URL=http://host.docker.internal:8888
 ALPHABETTY_OLLAMA_URL=http://localhost:11434/v1/chat/completions
 ALPHABETTY_ROUTER_URL=http://localhost:4000
-ALPHABETTY_TRANSMISSION_URL=http://transmission-vpn:9091/transmission/rpc
-ALPHABETTY_JACKETT_URL=http://transmission-vpn:9117
-ALPHABETTY_JACKETT_API_KEY=
-ALPHABETTY_STREAMER_URL=http://transmission-vpn:7701
 ENV
     echo "Created .env — EDIT IT with your API keys before starting"
 fi
 
-# ─── Jackett config dir ───
-mkdir -p jackett-config
-
-# ─── Torrent download dir ───
-mkdir -p torrents/complete torrents/incomplete torrents/streaming
-
 # ─── Open firewall ───
-echo "Opening ports 7700, 9091..."
+echo "Opening port 7700..."
 sudo firewall-cmd --permanent --add-port=7700/tcp 2>/dev/null || true
-sudo firewall-cmd --permanent --add-port=9091/tcp 2>/dev/null || true
 sudo firewall-cmd --reload 2>/dev/null || true
 # Oracle Cloud also needs the security list / network security group updated in the OCI console
-echo "IMPORTANT: Also open ports 7700 + 9091 in OCI Console → Networking → VCN → Security Lists"
+echo "IMPORTANT: Also open port 7700 in OCI Console → Networking → VCN → Security Lists"
 
 echo ""
 echo "=== Setup Complete ==="
@@ -194,5 +114,4 @@ echo "Memory usage estimate:"
 echo "  Chrome:    ~300-500MB"
 echo "  Xvfb:      ~20MB"
 echo "  FastAPI:   ~80MB"
-echo "  Streamer:  ~40MB"
-echo "  Total:     ~440-640MB (with 4GB swap as safety net)"
+echo "  Total:     ~400-600MB (with 4GB swap as safety net)"

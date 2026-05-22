@@ -214,46 +214,6 @@ AGENT_TOOLS = [
     {
         "type": "function",
         "function": {
-            "name": "torrent_search",
-            "description": "Search for torrents via Jackett (7 indexers behind VPN: TPB, 1337x, YTS, EZTV, LimeTorrents, TorrentProject2, Nyaa). Returns results with magnet links, seeders, and file sizes sorted by seeders. Optionally auto-adds the best result to Transmission for downloading.",
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "query": {"type": "string", "description": "Search query for torrents"},
-                    "auto_add": {"type": "boolean", "description": "Automatically add best result to Transmission (default false)", "default": False},
-                },
-                "required": ["query"],
-            },
-        },
-    },
-    {
-        "type": "function",
-        "function": {
-            "name": "torrent_list",
-            "description": "List all active torrents in Transmission with download progress, speeds, and status.",
-            "parameters": {
-                "type": "object",
-                "properties": {},
-            },
-        },
-    },
-    {
-        "type": "function",
-        "function": {
-            "name": "torrent_add",
-            "description": "Add a magnet link or torrent URL to Transmission for downloading. Use after torrent_search to download a specific result.",
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "url": {"type": "string", "description": "Magnet URI or .torrent URL to add"},
-                },
-                "required": ["url"],
-            },
-        },
-    },
-    {
-        "type": "function",
-        "function": {
             "name": "macro_record",
             "description": "Start recording a macro of browser interactions. Give it a name and optional starting URL.",
             "parameters": {
@@ -447,11 +407,6 @@ AGENT_SYSTEM = """You are Alphabetty, an autonomous AI research agent with full 
 - **video_play(url)** — Play any video URL (YouTube, Facebook, X, Instagram, TikTok, etc.)
 - **print_pdf()** — Print the current page as PDF
 
-### Torrents
-- **torrent_search(query, auto_add)** — Search Jackett for torrents (7 indexers behind VPN), optionally auto-add to Transmission
-- **torrent_list()** — List active torrents with progress
-- **torrent_add(url)** — Add a magnet link or torrent URL to Transmission
-
 ### Delegation
 - **delegate(task, agent)** — Delegate a sub-task to another agent
 
@@ -469,15 +424,6 @@ AGENT_SYSTEM = """You are Alphabetty, an autonomous AI research agent with full 
 6. Use tab management to work with multiple pages simultaneously
 7. Delegate sub-tasks to other agents when parallel work is needed
 8. Synthesize all findings into a comprehensive answer with citations
-
-## Torrent Workflow
-When a user wants to download or stream something:
-1. Use torrent_search to find results — show top results with title, size, and seeders
-2. Tell the user the file size — they can either stream immediately (sequential download) or add to Transmission for full download
-3. For streaming: tell the user to click the Stream button on the result — video starts playing while downloading
-4. For downloading: use torrent_add or auto_add=true to add to Transmission
-5. Use torrent_list to check progress — report percent done, download speed, and ETA
-6. Let the user know when the download is complete and they can stream it
 
 ## Rules
 - Always cite sources as [1], [2], etc.
@@ -664,9 +610,6 @@ _TOOL_GROUPS = {
     "media": {
         "youtube_play", "video_play",
     },
-    "torrent": {
-        "torrent_search", "torrent_list", "torrent_add",
-    },
     "macro": {
         "macro_record", "macro_stop", "macro_play",
     },
@@ -684,10 +627,6 @@ _INTENT_KEYWORDS = {
         "play", "video", "watch", "youtube", "yt", "music", "song", "movie", "clip",
         "stream", "listen", "audio", "facebook video", "instagram video", "tiktok",
         "x video", "twitter video", "embed",
-    ],
-    "torrent": [
-        "torrent", "download", "magnet", "seed", "leech", "pirate", "tracker",
-        "torrents", "transmission", "iso", "linux iso",
     ],
     "macro": [
         "macro", "record", "replay", "automate", "repeat",
@@ -822,17 +761,6 @@ def build_system_prompt(tools: list[dict]) -> str:
     if media_tools:
         sections.append("### Media\n" + "\n".join(media_tools))
 
-    torrent_tools = []
-    if "torrent_search" in available:
-        torrent_tools.append("- **torrent_search(query, auto_add)** — Search Jackett for torrents (7 indexers behind VPN), optionally auto-add to Transmission")
-    if "torrent_list" in available:
-        torrent_tools.append("- **torrent_list()** — List active torrents with progress")
-    if "torrent_add" in available:
-        torrent_tools.append("- **torrent_add(url)** — Add a magnet link or torrent URL to Transmission")
-
-    if torrent_tools:
-        sections.append("### Torrents\n" + "\n".join(torrent_tools))
-
     signin_tools = []
     if "signin_start" in available:
         signin_tools.append("- **signin_start(url, username, password)** — Start sign-in flow for a website")
@@ -863,15 +791,6 @@ def build_system_prompt(tools: list[dict]) -> str:
 6. Use tab management to work with multiple pages simultaneously
 7. Delegate sub-tasks to other agents when parallel work is needed
 8. Synthesize all findings into a comprehensive answer with citations
-
-## Torrent Workflow
-When a user wants to download or stream something:
-1. Use torrent_search to find results — show top results with title, size, and seeders
-2. Tell the user the file size — they can either stream immediately (sequential download) or add to Transmission for full download
-3. For streaming: tell the user to click the Stream button on the result — video starts playing while downloading
-4. For downloading: use torrent_add or auto_add=true to add to Transmission
-5. Use torrent_list to check progress — report percent done, download speed, and ETA
-6. Let the user know when the download is complete and they can stream it
 
 ## Rules
 - Always cite sources as [1], [2], etc.

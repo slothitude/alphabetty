@@ -35,19 +35,6 @@ class Settings(BaseSettings):
     demo_password: str = "demo"
     bootstrap_token: str = "alphabetty-bootstrap-secret"
 
-    # Transmission (torrent)
-    transmission_url: str = "http://localhost:9091/transmission/rpc"
-    transmission_user: str = "admin"
-    transmission_pass: str = "alphabetty"
-    torrent_dir: str = "/downloads"
-
-    # Jackett (torrent indexer behind VPN)
-    jackett_url: str = "http://localhost:9117"
-    jackett_api_key: str = ""  # Also used as admin password for linuxserver/jackett
-
-    # Torrent streamer (libtorrent sidecar behind VPN, sequential download + HTTP streaming)
-    streamer_url: str = "http://localhost:7701"
-
     # Agent bridge — comma-separated "name=url" pairs for outbound agent calling
     agent_endpoints: str = ""
 

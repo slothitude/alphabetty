@@ -60,7 +60,7 @@ async def search(query: str, categories: str = "general", language: str = "en",
             data = resp.json()
     except Exception as e:
         logger.error(f"SearXNG search failed: {e}")
-        return []
+        return [{"title": f"Search error: {e}", "url": "", "snippet": str(e), "error": True}]
 
     results = []
     for item in data.get("results", [])[:max_results]:

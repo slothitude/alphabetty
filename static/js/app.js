@@ -1222,8 +1222,6 @@ const app = {
             signin.load(list);
         } else if (tab === 'dashboard') {
             dashboard.load(list);
-        } else if (tab === 'torrents') {
-            torrents.load(list);
         } else {
             this.renderThreadList();
         }
