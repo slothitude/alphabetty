@@ -23,6 +23,49 @@ logger = logging.getLogger(__name__)
 # Transmission RPC uses a CSRF token (session header)
 _session_token: str = ""
 
+# Jackett session cookie (linuxserver image requires cookie-based auth)
+_jackett_cookie: str = ""
+
+
+async def _jackett_client() -> httpx.AsyncClient:
+    """Get an httpx client with valid Jackett auth cookie."""
+    global _jackett_cookie
+    base = settings.jackett_url
+    password = settings.jackett_api_key  # reused as admin password for linuxserver image
+
+    headers = {}
+    if _jackett_cookie:
+        headers["Cookie"] = _jackett_cookie
+
+    client = httpx.AsyncClient(timeout=30, base_url=base, headers=headers)
+
+    # Test if cookie still works
+    resp = await client.get("/api/v2.0/server/config")
+    if resp.status_code == 200:
+        return client
+
+    # Cookie expired — re-login
+    await client.aclose()
+
+    # Step 1: get CSRF cookie
+    login_client = httpx.AsyncClient(timeout=15, base_url=base, follow_redirects=False)
+    await login_client.get("/UI/Login")
+
+    # Step 2: login with password
+    resp = await login_client.post("/UI/Dashboard", data={"password": password})
+    cookie_header = resp.request.headers.get("Cookie", "")
+    set_cookies = [v for k, v in login_client.cookies.items()]
+    jackett_cookie = login_client.cookies.get("Jackett")
+
+    if jackett_cookie:
+        _jackett_cookie = f"Jackett={jackett_cookie}"
+    await login_client.aclose()
+
+    if not _jackett_cookie:
+        raise HTTPException(502, "Failed to authenticate with Jackett")
+
+    return httpx.AsyncClient(timeout=30, base_url=base, headers={"Cookie": _jackett_cookie})
+
 
 async def _transmission_rpc(method: str, arguments: dict = None) -> dict:
     """Call Transmission RPC. Handles CSRF token automatically."""
@@ -94,21 +137,21 @@ async def add_torrent(req: TorrentAddRequest, user: User = Depends(get_current_u
 @router.post("/torrents/search")
 async def search_torrents(req: TorrentSearchRequest, user: User = Depends(get_current_user)):
     """Search Jackett (behind VPN) for torrents. Optionally auto-add best result."""
-    jackett_url = settings.jackett_url
-    jackett_key = settings.jackett_api_key
-
-    # Query Jackett — all indexers, sorted by seeders
-    search_url = (
-        f"{jackett_url}/api/v2.0/indexers/all/results?"
+    search_path = (
+        f"/api/v2.0/indexers/all/results?"
         f"Query={quote(req.query)}&Categories=1000,2000,3000,4000,5000,6000,7000,8000"
-        f"&apikey={jackett_key}"
     )
 
     try:
-        async with httpx.AsyncClient(timeout=30) as client:
-            resp = await client.get(search_url)
+        client = await _jackett_client()
+        try:
+            resp = await client.get(search_path)
             resp.raise_for_status()
             data = resp.json()
+        finally:
+            await client.aclose()
+    except HTTPException:
+        raise
     except Exception as e:
         logger.warning(f"Jackett search failed: {e}")
         raise HTTPException(502, f"Torrent search failed: {e}")

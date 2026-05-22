@@ -43,7 +43,7 @@ class Settings(BaseSettings):
 
     # Jackett (torrent indexer behind VPN)
     jackett_url: str = "http://localhost:9117"
-    jackett_api_key: str = ""
+    jackett_api_key: str = ""  # Also used as admin password for linuxserver/jackett
 
     # Agent bridge — comma-separated "name=url" pairs for outbound agent calling
     agent_endpoints: str = ""

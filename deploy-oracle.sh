@@ -117,7 +117,7 @@ services:
 
   jackett:
     # Jackett torrent indexer — shares VPN tunnel with Transmission
-    image: linuxserver/jackett:latest
+    image: jackett/jackett:latest
     container_name: jackett
     network_mode: "service:transmission-vpn"
     environment:
