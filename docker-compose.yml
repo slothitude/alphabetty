@@ -19,6 +19,27 @@ services:
       - ALPHABETTY_DEMO_ENABLED=${ALPHABETTY_DEMO_ENABLED:-true}
       - ALPHABETTY_MCP_SSE=${ALPHABETTY_MCP_SSE:-true}
       - ALPHABETTY_API_KEY=${ALPHABETTY_API_KEY:-}
+      - ALPHABETTY_N8N_URL=${ALPHABETTY_N8N_URL:-http://n8n:5678}
+      - ALPHABETTY_N8N_API_KEY=${ALPHABETTY_N8N_API_KEY:-}
     restart: unless-stopped
     extra_hosts:
       - "host.docker.internal:host-gateway"
+
+  n8n:
+    image: n8nio/n8n:latest
+    container_name: n8n
+    volumes:
+      - ./n8n-data:/home/node/.n8n
+    environment:
+      - N8N_API_KEY=${ALPHABETTY_N8N_API_KEY:-change-me}
+      - WEBHOOK_URL=http://n8n:5678/
+      - EXECUTIONS_DATA_SAVE_ON_SUCCESS=last
+      - N8N_METRICS=false
+      - N8N_PERSONALIZATION_ENABLED=false
+      - N8N_DIAGNOSTICS_ENABLED=false
+      - N8N_VERSION_NOTIFICATIONS_ENABLED=false
+    deploy:
+      resources:
+        limits: { memory: 512M }
+        reservations: { memory: 256M }
+    restart: unless-stopped

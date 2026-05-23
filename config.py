@@ -38,6 +38,10 @@ class Settings(BaseSettings):
     # Agent bridge — comma-separated "name=url" pairs for outbound agent calling
     agent_endpoints: str = ""
 
+    # n8n workflow automation
+    n8n_url: str = "http://localhost:5678"
+    n8n_api_key: str = ""
+
     model_config = {"env_prefix": "ALPHABETTY_"}
 
 

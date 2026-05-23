@@ -80,6 +80,11 @@ async def plan_step(query: str) -> str:
 - signin_start(url, username, password) — start sign-in flow for a website
 - signin_2fa(code) — submit 2FA code
 - signin_auto(name) — auto sign-in using saved credential
+- workflow_list() — list n8n workflows
+- workflow_create(name, nodes, connections, active) — create n8n workflow
+- workflow_run(workflow_id, data) — trigger workflow execution
+- workflow_status(workflow_id, limit) — check execution history
+- workflow_delete(workflow_id) — delete a workflow
 
 Given a user query, briefly state which tools to use and in what order. 1-2 sentences max."""},
         {"role": "user", "content": f"Plan approach for: {query}"},
@@ -303,6 +308,36 @@ async def execute_tool(name: str, args: dict, session: AgentSession | None = Non
             result = await workflow.auto_signin(args["name"], tab_id=tid)
             return {"tool": "signin_auto", **result}
 
+        elif name == "workflow_list":
+            from core import n8n
+            result = await n8n.list_workflows()
+            return {"tool": "workflow_list", **result}
+
+        elif name == "workflow_create":
+            from core import n8n
+            result = await n8n.create_workflow(
+                name=args["name"],
+                nodes=args.get("nodes"),
+                connections=args.get("connections"),
+                active=args.get("active", False),
+            )
+            return {"tool": "workflow_create", **result}
+
+        elif name == "workflow_run":
+            from core import n8n
+            result = await n8n.execute_workflow(args["workflow_id"], data=args.get("data"))
+            return {"tool": "workflow_run", **result}
+
+        elif name == "workflow_status":
+            from core import n8n
+            result = await n8n.list_executions(args["workflow_id"], limit=args.get("limit", 10))
+            return {"tool": "workflow_status", **result}
+
+        elif name == "workflow_delete":
+            from core import n8n
+            result = await n8n.delete_workflow(args["workflow_id"])
+            return {"tool": "workflow_delete", **result}
+
         else:
             return {"error": f"Unknown tool: {name}"}
 
@@ -441,6 +476,48 @@ def format_tool_result_for_llm(tool_result: dict) -> str:
         if tool_result.get("state") == "waiting_2fa":
             return "Auto sign-in requires manual 2FA — use signin_2fa(code)"
         return f"Auto sign-in state: {tool_result.get('state', 'unknown')}"
+
+    elif tool == "workflow_list":
+        if tool_result.get("error"):
+            return f"Workflow list failed: {tool_result['error']}"
+        workflows = tool_result.get("data", [])
+        if not workflows:
+            return "No workflows found."
+        lines = [f"Workflows ({len(workflows)}):"]
+        for wf in workflows:
+            active = "active" if wf.get("active") else "inactive"
+            nodes = len(wf.get("nodes", []))
+            lines.append(f"  - [{wf.get('id')}] {wf.get('name')} ({active}, {nodes} nodes)")
+        return "\n".join(lines)
+
+    elif tool == "workflow_create":
+        if tool_result.get("error"):
+            return f"Workflow create failed: {tool_result['error']}"
+        wf = tool_result.get("data", tool_result)
+        return f"Workflow created: {wf.get('name', 'unnamed')} (id={wf.get('id')}, active={wf.get('active', False)})"
+
+    elif tool == "workflow_run":
+        if tool_result.get("error"):
+            return f"Workflow run failed: {tool_result['error']}"
+        return f"Workflow execution triggered: {json.dumps(tool_result)[:500]}"
+
+    elif tool == "workflow_status":
+        if tool_result.get("error"):
+            return f"Workflow status failed: {tool_result['error']}"
+        executions = tool_result.get("data", [])
+        if not executions:
+            return "No executions found for this workflow."
+        lines = [f"Executions ({len(executions)}):"]
+        for ex in executions:
+            status = ex.get("status", "unknown")
+            finished = ex.get("stoppedAt", "running")
+            lines.append(f"  - [{ex.get('id')}] {status} at {finished}")
+        return "\n".join(lines)
+
+    elif tool == "workflow_delete":
+        if tool_result.get("error"):
+            return f"Workflow delete failed: {tool_result['error']}"
+        return "Workflow deleted successfully"
 
     return json.dumps(tool_result)
 

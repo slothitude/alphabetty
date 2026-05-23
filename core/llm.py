@@ -375,6 +375,78 @@ AGENT_TOOLS = [
             },
         },
     },
+    {
+        "type": "function",
+        "function": {
+            "name": "workflow_list",
+            "description": "List all n8n workflows. Returns name, ID, active status, and node count for each workflow.",
+            "parameters": {
+                "type": "object",
+                "properties": {},
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "workflow_create",
+            "description": "Create a new n8n workflow from JSON nodes and connections. Use this to build persistent automations — scheduled tasks, webhooks, data pipelines, and multi-step workflows.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "name": {"type": "string", "description": "Workflow name"},
+                    "nodes": {"type": "array", "description": "Array of n8n node objects (each needs type, name, parameters, position)", "items": {"type": "object"}},
+                    "connections": {"type": "object", "description": "Node connection map — keys are node names, values map output indexes to input targets"},
+                    "active": {"type": "boolean", "description": "Whether to activate the workflow immediately (default false)", "default": False},
+                },
+                "required": ["name"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "workflow_run",
+            "description": "Trigger an n8n workflow execution by ID. Optionally pass input data.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "workflow_id": {"type": "string", "description": "The workflow ID to execute"},
+                    "data": {"type": "object", "description": "Optional input data for the workflow"},
+                },
+                "required": ["workflow_id"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "workflow_status",
+            "description": "Check execution history for an n8n workflow. Returns recent executions with status, duration, and timestamps.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "workflow_id": {"type": "string", "description": "The workflow ID to check"},
+                    "limit": {"type": "integer", "description": "Max executions to return (default 10)", "default": 10},
+                },
+                "required": ["workflow_id"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "workflow_delete",
+            "description": "Delete an n8n workflow by ID.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "workflow_id": {"type": "string", "description": "The workflow ID to delete"},
+                },
+                "required": ["workflow_id"],
+            },
+        },
+    },
 ]
 
 AGENT_SYSTEM = """You are Alphabetty, an autonomous AI research agent with full web browsing and automation capabilities.
@@ -414,6 +486,13 @@ AGENT_SYSTEM = """You are Alphabetty, an autonomous AI research agent with full 
 - **signin_start(url, username, password)** — Start sign-in flow for a website
 - **signin_2fa(code)** — Submit 2FA code when prompted
 - **signin_auto(name)** — Auto sign-in using saved credential profile
+
+### Workflows
+- **workflow_list()** — List all n8n workflows (name, ID, active, node count)
+- **workflow_create(name, nodes, connections, active)** — Create a persistent n8n workflow from JSON
+- **workflow_run(workflow_id, data)** — Trigger a workflow execution
+- **workflow_status(workflow_id, limit)** — Check execution history for a workflow
+- **workflow_delete(workflow_id)** — Delete a workflow
 
 ## Agent Strategy
 1. Start by searching for the user's query
@@ -619,6 +698,9 @@ _TOOL_GROUPS = {
     "utility": {
         "print_pdf",
     },
+    "workflow": {
+        "workflow_list", "workflow_create", "workflow_run", "workflow_status", "workflow_delete",
+    },
 }
 
 # Keyword → group mapping for intent detection
@@ -637,6 +719,10 @@ _INTENT_KEYWORDS = {
     ],
     "utility": [
         "pdf", "print", "export",
+    ],
+    "workflow": [
+        "workflow", "automate", "schedule", "cron", "webhook", "trigger",
+        "recurring", "pipeline", "notification", "n8n", "automation",
     ],
 }
 
@@ -780,6 +866,21 @@ def build_system_prompt(tools: list[dict]) -> str:
 
     if utility_tools:
         sections.append("### Delegation\n" + "\n".join(utility_tools))
+
+    workflow_tools = []
+    if "workflow_list" in available:
+        workflow_tools.append("- **workflow_list()** — List all n8n workflows (name, ID, active, node count)")
+    if "workflow_create" in available:
+        workflow_tools.append("- **workflow_create(name, nodes, connections, active)** — Create a persistent n8n workflow from JSON")
+    if "workflow_run" in available:
+        workflow_tools.append("- **workflow_run(workflow_id, data)** — Trigger a workflow execution")
+    if "workflow_status" in available:
+        workflow_tools.append("- **workflow_status(workflow_id, limit)** — Check execution history for a workflow")
+    if "workflow_delete" in available:
+        workflow_tools.append("- **workflow_delete(workflow_id)** — Delete a workflow")
+
+    if workflow_tools:
+        sections.append("### Workflows\n" + "\n".join(workflow_tools))
 
     # Rules — always present
     sections.append("""## Agent Strategy

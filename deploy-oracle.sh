@@ -55,6 +55,8 @@ services:
       - ALPHABETTY_CHROME_WINDOW_SIZE=1280,720
       - ALPHABETTY_LOW_RAM=true
       - ALPHABETTY_SEARXNG_URL=http://100.84.161.63:8888
+      - ALPHABETTY_N8N_URL=http://n8n:5678
+      - ALPHABETTY_N8N_API_KEY=${ALPHABETTY_N8N_API_KEY:-change-me}
     deploy:
       resources:
         limits:
@@ -80,6 +82,14 @@ services:
           sleep 0.5
         done
         exec uvicorn app:app --host 0.0.0.0 --port 7700 --workers 1
+
+  n8n:
+    deploy:
+      resources:
+        limits:
+          memory: 384M
+        reservations:
+          memory: 192M
 YAML
 
 # ─── Create .env from template ───
@@ -91,6 +101,7 @@ ALPHABETTY_LLM_API_KEY=your-key-here
 ALPHABETTY_SEARXNG_URL=http://100.84.161.63:8888
 ALPHABETTY_OLLAMA_URL=http://localhost:11434/v1/chat/completions
 ALPHABETTY_ROUTER_URL=http://localhost:4000
+ALPHABETTY_N8N_API_KEY=change-me
 ENV
     echo "Created .env — EDIT IT with your API keys before starting"
 fi
@@ -109,6 +120,9 @@ echo "Next steps:"
 echo "  1. Edit /opt/alphabetty/.env with your API keys"
 echo "  2. cd /opt/alphabetty && docker compose up --build -d"
 echo "  3. Open http://<oracle-ip>:7700"
+echo "  4. Set up n8n: open http://<oracle-ip>:5678, create owner account"
+echo "     Then generate API key in Settings → API → Create API Key"
+echo "     Set ALPHABETTY_N8N_API_KEY in .env and restart"
 echo ""
 echo "Memory usage estimate:"
 echo "  Chrome:    ~300-500MB"

@@ -794,6 +794,75 @@ async def signin_save(name: str, url: str, username: str, password: str,
     return json.dumps(await _post("/api/signin/credentials", payload))
 
 
+# ─── Workflows (n8n) ───
+
+@mcp.tool()
+async def workflow_list() -> str:
+    """List all n8n workflows with name, ID, active status, and node count."""
+    return json.dumps(await _get("/api/workflows"))
+
+
+@mcp.tool()
+async def workflow_create(name: str, nodes: str = "[]", connections: str = "{}",
+                          active: bool = False) -> str:
+    """Create a new n8n workflow from JSON nodes and connections. Builds persistent automations — scheduled tasks, webhooks, data pipelines.
+
+    Args:
+        name: Workflow name
+        nodes: JSON array of n8n node objects (each needs type, name, parameters, position)
+        connections: JSON object mapping node names to their connections
+        active: Whether to activate the workflow immediately
+    """
+    import json as _json
+    payload = {"name": name, "active": active}
+    try:
+        payload["nodes"] = _json.loads(nodes)
+    except _json.JSONDecodeError:
+        return _json.dumps({"error": "Invalid nodes JSON"})
+    try:
+        payload["connections"] = _json.loads(connections)
+    except _json.JSONDecodeError:
+        return _json.dumps({"error": "Invalid connections JSON"})
+    return json.dumps(await _post("/api/workflows", payload))
+
+
+@mcp.tool()
+async def workflow_run(workflow_id: str, data: str = "{}") -> str:
+    """Trigger an n8n workflow execution by ID.
+
+    Args:
+        workflow_id: The workflow ID to execute
+        data: Optional JSON input data for the workflow
+    """
+    import json as _json
+    try:
+        parsed_data = _json.loads(data)
+    except _json.JSONDecodeError:
+        return _json.dumps({"error": "Invalid data JSON"})
+    return json.dumps(await _post(f"/api/workflows/{workflow_id}/run", {"data": parsed_data}))
+
+
+@mcp.tool()
+async def workflow_status(workflow_id: str, limit: int = 10) -> str:
+    """Check execution history for an n8n workflow. Returns recent executions with status and timestamps.
+
+    Args:
+        workflow_id: The workflow ID to check
+        limit: Max executions to return (default 10)
+    """
+    return json.dumps(await _get(f"/api/workflows/{workflow_id}/executions", {"limit": limit}))
+
+
+@mcp.tool()
+async def workflow_delete(workflow_id: str) -> str:
+    """Delete an n8n workflow by ID.
+
+    Args:
+        workflow_id: The workflow ID to delete
+    """
+    return json.dumps(await _delete(f"/api/workflows/{workflow_id}"))
+
+
 # ─── Fast / Raw CDP ───
 
 @mcp.tool()

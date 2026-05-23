@@ -93,6 +93,7 @@ from api.tools import router as tools_router
 from api.events import router as events_router
 from api.signin import router as signin_router
 from api.auth import router as auth_router
+from api.workflows import router as workflows_router
 
 
 app.include_router(auth_router, prefix="/api/v1")
@@ -109,6 +110,7 @@ app.include_router(graph_router, prefix="/api/v1")
 app.include_router(tools_router, prefix="/api/v1")
 app.include_router(events_router, prefix="/api/v1")
 app.include_router(signin_router, prefix="/api/v1")
+app.include_router(workflows_router, prefix="/api/v1")
 
 # Backward compat: also mount all routers at /api (unversioned)
 app.include_router(auth_router, prefix="/api")
@@ -125,6 +127,7 @@ app.include_router(graph_router, prefix="/api")
 app.include_router(tools_router, prefix="/api")
 app.include_router(events_router, prefix="/api")
 app.include_router(signin_router, prefix="/api")
+app.include_router(workflows_router, prefix="/api")
 
 
 # ── MCP SSE endpoint for LLM agents (GhostKV, Claude Code, etc.) ────
