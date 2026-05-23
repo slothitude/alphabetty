@@ -4,7 +4,7 @@ AI research assistant with web search, Chrome automation, deep research, workflo
 
 ## What It Does
 
-Alphabetty is a self-hosted AI platform that combines web search, AI chat, headless Chrome browsing, workflow automation (n8n), and a local knowledge graph into a single tool. It runs as a swarm across your machines and the cloud, with multi-user auth and 55 MCP tools for external agents.
+Alphabetty is a self-hosted AI platform that combines web search, AI chat, headless Chrome browsing, workflow automation (n8n), and a local knowledge graph into a single tool. It runs as a swarm across your machines and the cloud, with multi-user auth and 57 MCP tools for external agents.
 
 **Core capabilities:**
 
@@ -19,6 +19,7 @@ Alphabetty is a self-hosted AI platform that combines web search, AI chat, headl
 - **Swarm Architecture** — Run multiple instances across machines (LAN + cloud) coordinated via MCP layer. Each instance operates independently with shared tool surface.
 - **Multi-User Auth** — JWT cookies + API keys with user isolation. Ephemeral session users for CI/CD agents. Admin, demo, and custom user accounts.
 - **Agent-to-Agent Connectivity** — SSE event bus for real-time notifications. Outbound agent bridge to delegate tasks to remote agents. External agents subscribe to events via `/api/events`.
+- **Chrome Extension** — In-browser sidebar for AI chat with page context. Auto-connects when on an Alphabetty page (cookie-based handshake, no setup). WebSocket command relay lets the server control the user's actual browser tab — real cookies, real login state, no headless. Agents can execute JavaScript, click, type, navigate, and read page content through the extension.
 - **Knowledge Graph** — FTS5 full-text search across all conversations, messages, and entities. Automatic entity extraction and relationship mapping. Tagging system for organizing research.
 - **File Analysis** — Upload and analyze PDF, DOCX, text, and code files with AI-powered Q&A.
 - **Image Generation** — Generate images via ComfyUI/FLUX pipeline.
@@ -50,6 +51,12 @@ Alphabetty is a platform, not just a tool. Here are some possibilities:
 - n8n webhook receives external trigger → spins up agent task → posts results to Slack/email
 - Multiple Alphabetty instances coordinate: Oracle handles scheduled tasks, Lappy handles browser-heavy work
 
+### Chrome Extension
+- "Read the page I'm on and summarize it" — sidebar chat with page context injection
+- Agent clicks through the user's actual browser: `ext_execute("click", {"selector": "#btn"})`
+- "Navigate my browser to this URL and fill in the form" — ext_execute navigate + type
+- Right-click selected text → "Ask Alphabetty about..." → pre-filled sidebar query
+
 ### Data Extraction & Processing
 - "Extract all product names and prices from this category page" — navigate + extract + structured output
 - "Download and analyze every PDF linked from this page" — crawl + file upload + analysis pipeline
@@ -72,25 +79,28 @@ Alphabetty is a platform, not just a tool. Here are some possibilities:
 ┌─────────────┐     │  ├── SSE Event Bus (page.load, research.done)│
 │  MCP Server  │◂────┤  ├── Agent Bridge (outbound delegation)     │
 │  (stdio)     │     │  ├── n8n Workflows (automation sidecar)     │
-│  55 tools    │     │  ├── Multi-User Auth (JWT + API keys)       │
-└─────────────┘     │  └── Spaces / Export                         │
-                    │                                              │
-┌─────────────┐     │  REST Tools API                               │
-│  Claude Code │     │  GET  /api/v1/tools  (55 tool definitions)  │
-│  GPT / Other │────▸│  POST /api/v1/tools/call                     │
-└─────────────┘     │                                              │
-                    │  SSE Event Stream                            │
-┌─────────────┐     │  GET  /api/events          (all events)      │
-│  n8n Sidecar │     │  GET  /api/events/{type}   (filtered)        │
-│  :5678       │◂────┤  Workflow API: /api/v1/workflows/*          │
+│  57 tools    │     │  ├── Multi-User Auth (JWT + API keys)       │
+└─────────────┘     │  ├── Extension WS (tab control relay)        │
+                    │  └── Spaces / Export                         │
+┌─────────────┐     │                                              │
+│  Chrome Ext  │     │  Extension API                               │
+│  (sidebar)   │◂───▸│  WS  /api/v1/ext/ws  (command relay)       │
+│  WebSocket   │     │  POST /api/v1/ext/execute                   │
 └─────────────┘     └──────────────────────────────────────────────┘
-┌─────────────┐
+┌─────────────┐     ┌─────────────┐
+│  Claude Code │     │  n8n Sidecar │
+│  GPT / Other │────▸│  :5678       │◂────┤
+└─────────────┘     └─────────────┘     │
+                    ┌─────────────┐     │ SSE Event Stream
+                    │  Remote Agent│     │ /api/events
+                    │  (delegate)  │◂────┘
+                    └─────────────┘
 │  Remote Agent│
 │  (delegate)  │◂──── agent_bridge ──HTTP──▸ external MCP servers
 └─────────────┘
 ```
 
-1. **MCP Server** (`mcp_server.py`) — Stdio transport, HTTP proxy to running app. For Claude Code, Cursor, and any MCP-compatible client. 55 tools.
+1. **MCP Server** (`mcp_server.py`) — Stdio transport, HTTP proxy to running app. For Claude Code, Cursor, and any MCP-compatible client. 57 tools.
 2. **REST Tools API** (`/api/v1/tools`) — OpenAI-format tool definitions + dispatch endpoint. For any agent with function calling.
 3. **SSE Event Stream** (`/api/events`) — Real-time event notifications. External agents subscribe to page loads, research completion, macro finishes, etc.
 4. **n8n Sidecar** (`:5678`) — Persistent workflow automation. Scheduled tasks, webhooks, API orchestration. Controlled via agent/MCP tools or n8n UI.
@@ -131,7 +141,18 @@ Add to `~/.claude/.mcp.json`:
 }
 ```
 
-Restart Claude Code — all 55 tools appear as `mcp__alphabetty__*`.
+Restart Claude Code — all 57 tools appear as `mcp__alphabetty__*`.
+
+### Chrome Extension
+
+1. Open Chrome → `chrome://extensions` → enable **Developer mode**
+2. Click **Load unpacked** → select the `extension/` directory
+3. Navigate to your Alphabetty instance and log in
+4. Click the extension icon → sidebar opens and auto-connects (no setup needed)
+
+Manual setup (for connecting to a different instance): click the gear icon in the sidebar, enter server URL and API key.
+
+The extension adds a sidebar chat, page context injection, right-click "Ask Alphabetty about..." context menu, and a WebSocket command relay that lets the server control the active tab. Agents can use `ext_execute` to run JavaScript, click elements, type text, navigate, and read page content on the user's actual browser.
 
 ### REST API (any agent)
 
@@ -168,7 +189,7 @@ curl -N http://localhost:7700/api/events/research.done
 
 Event types: `page.loaded`, `research.done`, `macro.done`, `recording.done`, `youtube.playing`, `agent.done`, `tab.created`, `signin.started`, `signin.2fa_required`, `signin.done`, `signin.failed`
 
-## Tool Catalog (55 Tools)
+## Tool Catalog (57 Tools)
 
 ### Research & Search
 | Tool | Description |
@@ -266,6 +287,12 @@ Event types: `page.loaded`, `research.done`, `macro.done`, `recording.done`, `yo
 | `workflow_status` | Check execution history for a workflow |
 | `workflow_delete` | Delete a workflow |
 
+### Chrome Extension (user's browser)
+| Tool | Description |
+|------|-------------|
+| `ext_status` | Check if extension is connected |
+| `ext_execute` | Run command on user's tab: evaluate, click, type, navigate, getDOM, getText |
+
 ## Agent Tools (25 Internal Tools)
 
 The autonomous agent has access to these tools for multi-step research and automation:
@@ -349,7 +376,8 @@ alphabetty/
 │   ├── export.py       #   Markdown & PDF export
 │   ├── graph.py        #   Knowledge graph + tags + FTS5
 │   ├── signin.py       #   Sign-in workflow + credential CRUD
-│   └── tools.py        #   REST tools API (OpenAI format, 55 tools)
+│   └── tools.py        #   REST tools API (OpenAI format, 57 tools)
+│   └── extension.py    #   Extension endpoints (ping, handshake, health, WS, execute)
 ├── core/               # Business logic
 │   ├── llm.py          #   LLM streaming/calling, fallback, 25 agent tools, smart routing
 │   ├── searxng.py      #   Search with query classification
@@ -380,6 +408,13 @@ alphabetty/
 │   └── js/dashboard.js #   Dashboard (tabs, macros, system status)
 │   └── js/signin.js    #   Sign-in UI panel
 ├── templates/          # Jinja2 partials for HTMX
+├── extension/          # Chrome Extension (Manifest V3)
+│   ├── manifest.json   #   Permissions: activeTab, storage, scripting, sidePanel, contextMenus, tabs, alarms
+│   ├── background.js   #   Service worker: auto-connect, health, command relay
+│   ├── sidepanel.html/js/css  # Sidebar chat UI with SSE streaming
+│   ├── setup.html/js   # Manual setup (server URL + API key)
+│   ├── content.js      # Content script: DOM commands (click, type, navigate, getDOM, getText)
+│   └── lib/api.js      # Fetch wrapper + SSE consumer
 └── data/               # SQLite database storage
 ```
 
