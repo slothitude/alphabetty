@@ -80,6 +80,21 @@ function checkHealth() {
         _setConnectionState(
           data.status === "ok" ? CONNECTION_STATES.CONNECTED : CONNECTION_STATES.AUTH_FAILED
         );
+        // Version check — notify if server updated
+        if (data.version) {
+          chrome.storage.local.get("lastServerVersion", function (stored) {
+            var last = stored.lastServerVersion;
+            if (last && last !== data.version) {
+              chrome.notifications.create("version-update", {
+                type: "basic",
+                iconUrl: "icons/icon128.png",
+                title: "Alphabetty Updated",
+                message: "Server updated to v" + data.version + ". Reload the extension for best experience.",
+              });
+            }
+            chrome.storage.local.set({ lastServerVersion: data.version });
+          });
+        }
       });
   }).catch(function (e) {
     _setConnectionState(
