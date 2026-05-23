@@ -49,6 +49,12 @@ class Settings(BaseSettings):
     n8n_url: str = "http://localhost:5678"
     n8n_api_key: str = ""
 
+    # Swarm inter-instance routing
+    swarm_name: str = ""        # This instance's identity (e.g. "oracle", "lappy")
+    swarm_caps: str = ""        # Comma-separated capabilities (browser,gpu,llm_heavy,search,image_gen)
+    swarm_peers: str = ""       # Comma-separated "name=url" pairs
+    swarm_key: str = ""         # Shared auth key for inter-instance calls
+
     model_config = {"env_prefix": "ALPHABETTY_"}
 
 

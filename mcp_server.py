@@ -1044,6 +1044,45 @@ async def download_list(subdir: str = "") -> str:
     return json.dumps(await _get("/api/download/files", params))
 
 
+# ─── Swarm ───
+
+@mcp.tool()
+async def swarm_status() -> str:
+    """Get swarm status: this instance's capabilities and peer health.
+    Shows which Alphabetty instances are available and what they can do."""
+    return json.dumps(await _get("/api/swarm/status"))
+
+
+@mcp.tool()
+async def swarm_execute(peer_url: str, tool: str, args: str = "{}") -> str:
+    """Execute a tool on a remote swarm peer. Routes through the swarm transport layer.
+    Use swarm_status first to find available peers and their capabilities.
+
+    Args:
+        peer_url: Base URL of the target peer (e.g. 'http://192.168.0.33:7700')
+        tool: Tool name to execute (e.g. 'browse', 'click', 'screenshot')
+        args: JSON string of tool arguments
+    """
+    import json as _json
+    try:
+        parsed_args = _json.loads(args)
+    except _json.JSONDecodeError:
+        return _json.dumps({"error": "Invalid args JSON"})
+
+    swarm_key = os.environ.get("ALPHABETTY_SWARM_KEY", "")
+    url = f"{peer_url.rstrip('/')}/api/v1/swarm/execute"
+    payload = {"tool": tool, "args": parsed_args}
+    headers = {"Content-Type": "application/json"}
+    if swarm_key:
+        headers["X-Swarm-Key"] = swarm_key
+
+    async with httpx.AsyncClient(timeout=httpx.Timeout(120.0)) as client:
+        r = await client.post(url, json=payload, headers=headers)
+        if r.status_code >= 400:
+            return json.dumps({"error": f"HTTP {r.status_code}", "detail": r.text[:500]})
+        return json.dumps(r.json())
+
+
 # ─── Extension (control user's browser tab via Chrome extension) ───
 
 async def ext_status() -> str:

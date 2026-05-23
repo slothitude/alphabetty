@@ -91,13 +91,32 @@ async def lifespan(app: FastAPI):
     except Exception as e:
         _bg_logger.debug(f"Provider model discovery skipped: {e}")
 
+    # Init swarm peers
+    try:
+        from core.swarm import swarm
+        swarm.init_peers()
+    except Exception as e:
+        _bg_logger.debug(f"Swarm init skipped: {e}")
+
+    async def _swarm_health_loop():
+        """Periodically check swarm peer health."""
+        while True:
+            await asyncio.sleep(60)
+            try:
+                from core.swarm import swarm
+                await swarm.health_check_all()
+            except Exception as e:
+                _bg_logger.debug(f"Swarm health check failed: {e}")
+
     chrome_task = asyncio.create_task(_chrome_health_check())
     cleanup_task = asyncio.create_task(_session_cleanup())
     provider_task = asyncio.create_task(_provider_refresh())
+    swarm_task = asyncio.create_task(_swarm_health_loop())
     yield
     chrome_task.cancel()
     cleanup_task.cancel()
     provider_task.cancel()
+    swarm_task.cancel()
 
 
 app = FastAPI(title="Alphabetty", lifespan=lifespan)
@@ -139,6 +158,7 @@ from api.extension import router as extension_router
 from api.download import router as download_router
 from api.share import router as share_router
 from api.models import router as models_router
+from api.swarm import router as swarm_router
 
 
 app.include_router(auth_router, prefix="/api/v1")
@@ -160,6 +180,7 @@ app.include_router(extension_router, prefix="/api/v1")
 app.include_router(download_router, prefix="/api/v1")
 app.include_router(share_router, prefix="/api/v1")
 app.include_router(models_router, prefix="/api/v1")
+app.include_router(swarm_router, prefix="/api/v1")
 
 # Backward compat: also mount all routers at /api (unversioned)
 app.include_router(auth_router, prefix="/api")
@@ -181,6 +202,7 @@ app.include_router(extension_router, prefix="/api")
 app.include_router(download_router, prefix="/api")
 app.include_router(share_router, prefix="/api")
 app.include_router(models_router, prefix="/api")
+app.include_router(swarm_router, prefix="/api")
 
 
 # ── MCP SSE endpoint for LLM agents (GhostKV, Claude Code, etc.) ────

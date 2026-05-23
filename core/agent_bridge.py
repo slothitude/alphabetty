@@ -126,3 +126,22 @@ def list_agents() -> dict:
     """List available agent endpoints."""
     endpoints = _get_endpoints()
     return {"agents": [{"name": k, "url": v} for k, v in endpoints.items()]}
+
+
+async def call_tool_authenticated(base_url: str, tool: str, args: dict = None) -> dict:
+    """Call a tool on a remote swarm peer with X-Swarm-Key authentication."""
+    url = f"{base_url.rstrip('/')}/api/v1/swarm/execute"
+    payload = {"tool": tool, "args": args or {}}
+    headers = {
+        "Content-Type": "application/json",
+        "X-Swarm-Key": settings.swarm_key,
+    }
+
+    try:
+        async with httpx.AsyncClient(timeout=httpx.Timeout(120.0)) as client:
+            resp = await client.post(url, json=payload, headers=headers)
+            resp.raise_for_status()
+            return resp.json()
+    except Exception as e:
+        logger.error(f"Authenticated swarm call failed ({base_url}/{tool}): {e}")
+        return {"error": str(e)}

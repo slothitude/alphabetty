@@ -109,6 +109,17 @@ async def reflect_step(query: str, rounds_done: int, tool_log: list[dict]) -> st
 
 async def execute_tool(name: str, args: dict, session: AgentSession | None = None) -> dict:
     """Execute a tool call and return the result."""
+    # Swarm routing: delegate to peer if local instance lacks capability
+    try:
+        from core.swarm import swarm
+        target = swarm.route_tool(name, args)
+        if target:
+            result = await swarm.execute_remote(target, name, args)
+            result["swarm_routed"] = target.name
+            return result
+    except Exception as e:
+        logger.debug(f"Swarm routing failed for {name}, falling back to local: {e}")
+
     try:
         if name == "search":
             results = await searxng_search(args["query"], max_results=args.get("max_results", 8))

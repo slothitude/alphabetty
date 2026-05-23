@@ -21,6 +21,10 @@ services:
       - ALPHABETTY_API_KEY=${ALPHABETTY_API_KEY:-}
       - ALPHABETTY_N8N_URL=${ALPHABETTY_N8N_URL:-http://n8n:5678}
       - ALPHABETTY_N8N_API_KEY=${ALPHABETTY_N8N_API_KEY:-}
+      - ALPHABETTY_SWARM_NAME=${ALPHABETTY_SWARM_NAME:-}
+      - ALPHABETTY_SWARM_CAPS=${ALPHABETTY_SWARM_CAPS:-}
+      - ALPHABETTY_SWARM_PEERS=${ALPHABETTY_SWARM_PEERS:-}
+      - ALPHABETTY_SWARM_KEY=${ALPHABETTY_SWARM_KEY:-}
     restart: unless-stopped
     extra_hosts:
       - "host.docker.internal:host-gateway"
