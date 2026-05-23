@@ -1,26 +1,64 @@
 # Alphabetty
 
-AI research assistant with web search, Chrome automation, deep research, knowledge graph, and agent-to-agent connectivity — accessible via web UI, MCP tools, SSE event stream, or REST API.
+AI research assistant with web search, Chrome automation, deep research, workflow automation, knowledge graph, and agent-to-agent connectivity — accessible via web UI, MCP tools, SSE event stream, or REST API.
 
 ## What It Does
 
-Alphabetty is a self-hosted research platform that combines web search, AI chat, headless Chrome browsing, and a local knowledge graph into a single tool. It's designed for deep research workflows where you need to search multiple sources, read pages, extract data, and synthesize findings — with everything saved and searchable.
+Alphabetty is a self-hosted AI platform that combines web search, AI chat, headless Chrome browsing, workflow automation (n8n), and a local knowledge graph into a single tool. It runs as a swarm across your machines and the cloud, with multi-user auth and 55 MCP tools for external agents.
 
 **Core capabilities:**
 
 - **AI Chat** — Conversational AI with web search integration. Every response is backed by sources with domain authority scoring. Supports multiple writing modes (concise, detailed, creative, academic, code).
 - **Web Search** — SearXNG-powered search with adaptive query classification. Automatically categorizes queries (news, technical, academic) and optimizes search strategy.
 - **Deep Research** — Multi-round automated research pipeline: plans search queries, executes them, extracts content from sources, identifies gaps in coverage, runs follow-up searches, and synthesizes a comprehensive report.
-- **Agent Mode** — Autonomous AI agent with 19 tools (search, browse, click, type, scroll, tabs, macros, YouTube, PDF, delegation, sign-in). Runs multiple rounds with planning and reflection.
-- **Chrome Automation** — Full headless Chrome control via CDP with anti-detection. Tab management, human-like clicking/typing/scrolling, wait-for-element, PDF printing, JavaScript evaluation, screenshots, DOM inspection, cookie management.
-- **Macro Recording** — Record and replay browser interactions (API-level and browser-level) with timing-preserving playback. Screen recording via CDP screencast.
+- **Agent Mode** — Autonomous AI agent with 25 tools (search, browse, click, type, scroll, tabs, macros, YouTube, PDF, delegation, sign-in, workflows). Smart tool routing selects the right subset based on intent. Runs multiple rounds with planning and reflection.
+- **Chrome Automation** — Full headless Chrome control via CDP with anti-detection. Tab management, human-like clicking/typing/scrolling, wait-for-element, PDF printing, JavaScript evaluation, screenshots, DOM inspection, cookie management, file uploads.
+- **Macro Recording** — Record and replay browser interactions (API-level and browser-level) with variable interpolation, conditionals, error recovery, and timing-preserving playback. Screen recording via CDP screencast.
 - **Sign-In Workflow** — Automated sign-in for any website with form detection, multi-step support (Google-style email→password), 2FA handling (manual code entry + automatic TOTP via pyotp), and saved credential profiles for one-click re-authentication.
+- **Workflow Automation** — n8n sidecar for persistent automation: scheduled tasks, webhooks, API orchestration, data pipelines, and multi-step workflows with branching/loops. Create workflows via natural language through the agent or MCP tools.
+- **Swarm Architecture** — Run multiple instances across machines (LAN + cloud) coordinated via MCP layer. Each instance operates independently with shared tool surface.
+- **Multi-User Auth** — JWT cookies + API keys with user isolation. Ephemeral session users for CI/CD agents. Admin, demo, and custom user accounts.
 - **Agent-to-Agent Connectivity** — SSE event bus for real-time notifications. Outbound agent bridge to delegate tasks to remote agents. External agents subscribe to events via `/api/events`.
 - **Knowledge Graph** — FTS5 full-text search across all conversations, messages, and entities. Automatic entity extraction and relationship mapping. Tagging system for organizing research.
 - **File Analysis** — Upload and analyze PDF, DOCX, text, and code files with AI-powered Q&A.
 - **Image Generation** — Generate images via ComfyUI/FLUX pipeline.
+- **Video Playback** — Play any video URL (YouTube, Twitter, TikTok, etc.) via yt-dlp stream extraction.
 - **Spaces** — Organize conversations into spaces for project-based research.
 - **Export** — Export conversations as Markdown or PDF.
+
+## What You Can Build
+
+Alphabetty is a platform, not just a tool. Here are some possibilities:
+
+### Automated Monitoring
+- "Watch this page every hour and email me if it changes" — n8n scheduled workflow + Chrome content extraction + email notification
+- "Monitor these 5 news sites for mentions of [topic]" — recurring search + knowledge graph matching + digest generation
+- "Track price changes on this product page" — scheduled scrape + comparison logic + alert
+
+### Research Pipelines
+- "Deep research [topic] and save a summary to my knowledge base every Monday" — n8n cron trigger → agent deep research → auto-tag and store
+- "Whenever I tag a conversation as 'follow-up', create a research workflow" — SSE event listener → n8n webhook → automated research
+- "Compare today's news against my existing research" — scheduled fetch + knowledge graph search + synthesis
+
+### Browser Automation at Scale
+- "Fill out this form every day at 9am with today's data" — n8n schedule → Chrome macro playback with variables
+- "Record my login flow, then auto-login every session" — macro recording + credential saving + auto sign-in
+- "Take screenshots of these 10 competitor sites weekly" — n8n workflow + multi-tab Chrome automation
+
+### Agent-to-Agent Workflows
+- Claude Code delegates research to Alphabetty → gets structured results back via MCP tools
+- n8n webhook receives external trigger → spins up agent task → posts results to Slack/email
+- Multiple Alphabetty instances coordinate: Oracle handles scheduled tasks, Lappy handles browser-heavy work
+
+### Data Extraction & Processing
+- "Extract all product names and prices from this category page" — navigate + extract + structured output
+- "Download and analyze every PDF linked from this page" — crawl + file upload + analysis pipeline
+- "Convert this webpage to clean Markdown" — content extraction with 30-min cache
+
+### Multi-Instance Coordination
+- **Oracle** (always-on cloud): scheduled workflows, webhooks, persistent automation
+- **Lappy** (LAN heavyweight): browser-heavy tasks, GPU inference, video processing
+- **Rog** (dev station): local testing, development, ad-hoc research
 
 ## Architecture
 
@@ -33,16 +71,20 @@ Alphabetty is a self-hosted research platform that combines web search, AI chat,
                     │  ├── Macro Recording / Screen Recording       │
 ┌─────────────┐     │  ├── SSE Event Bus (page.load, research.done)│
 │  MCP Server  │◂────┤  ├── Agent Bridge (outbound delegation)     │
-│  (stdio)     │     │  └── Spaces / Export                         │
-│  49 tools    │     │                                              │
-└─────────────┘     │  REST Tools API                               │
-                    │  GET  /api/v1/tools  (49 tool definitions)   │
-┌─────────────┐     │  POST /api/v1/tools/call                     │
-│  Claude Code │     │                                              │
-│  GPT / Other │────▸│  SSE Event Stream                            │
-└─────────────┘     │  GET  /api/events          (all events)      │
-                    │  GET  /api/events/{type}   (filtered)        │
-┌─────────────┐     └──────────────────────────────────────────────┘
+│  (stdio)     │     │  ├── n8n Workflows (automation sidecar)     │
+│  55 tools    │     │  ├── Multi-User Auth (JWT + API keys)       │
+└─────────────┘     │  └── Spaces / Export                         │
+                    │                                              │
+┌─────────────┐     │  REST Tools API                               │
+│  Claude Code │     │  GET  /api/v1/tools  (55 tool definitions)  │
+│  GPT / Other │────▸│  POST /api/v1/tools/call                     │
+└─────────────┘     │                                              │
+                    │  SSE Event Stream                            │
+┌─────────────┐     │  GET  /api/events          (all events)      │
+│  n8n Sidecar │     │  GET  /api/events/{type}   (filtered)        │
+│  :5678       │◂────┤  Workflow API: /api/v1/workflows/*          │
+└─────────────┘     └──────────────────────────────────────────────┘
+┌─────────────┐
 │  Remote Agent│
 │  (delegate)  │◂──── agent_bridge ──HTTP──▸ external MCP servers
 └─────────────┘
@@ -51,6 +93,7 @@ Alphabetty is a self-hosted research platform that combines web search, AI chat,
 1. **MCP Server** (`mcp_server.py`) — Stdio transport, HTTP proxy to running app. For Claude Code, Cursor, and any MCP-compatible client. 55 tools.
 2. **REST Tools API** (`/api/v1/tools`) — OpenAI-format tool definitions + dispatch endpoint. For any agent with function calling.
 3. **SSE Event Stream** (`/api/events`) — Real-time event notifications. External agents subscribe to page loads, research completion, macro finishes, etc.
+4. **n8n Sidecar** (`:5678`) — Persistent workflow automation. Scheduled tasks, webhooks, API orchestration. Controlled via agent/MCP tools or n8n UI.
 
 ## Quick Start
 
@@ -88,7 +131,7 @@ Add to `~/.claude/.mcp.json`:
 }
 ```
 
-Restart Claude Code — all 49 tools appear as `mcp__alphabetty__*`.
+Restart Claude Code — all 55 tools appear as `mcp__alphabetty__*`.
 
 ### REST API (any agent)
 
@@ -214,7 +257,16 @@ Event types: `page.loaded`, `research.done`, `macro.done`, `recording.done`, `yo
 | `export_markdown` | Export conversation as Markdown |
 | `export_pdf` | Export conversation as PDF |
 
-## Agent Tools (19 Internal Tools)
+### Workflow Automation (n8n)
+| Tool | Description |
+|------|-------------|
+| `workflow_list` | List all n8n workflows |
+| `workflow_create` | Create workflow from node/connection JSON |
+| `workflow_run` | Trigger workflow execution by ID |
+| `workflow_status` | Check execution history for a workflow |
+| `workflow_delete` | Delete a workflow |
+
+## Agent Tools (25 Internal Tools)
 
 The autonomous agent has access to these tools for multi-step research and automation:
 
@@ -227,6 +279,7 @@ The autonomous agent has access to these tools for multi-step research and autom
 | `type_text` | Type into an input field |
 | `screenshot` | Capture current page state |
 | `youtube_play` | Search and play YouTube video |
+| `video_play` | Play any video URL (yt-dlp extraction) |
 | `macro_record` | Start recording a macro |
 | `macro_stop` | Stop recording and save |
 | `macro_play` | Replay a saved macro |
@@ -234,11 +287,18 @@ The autonomous agent has access to these tools for multi-step research and autom
 | `tab_new` | Open a new tab |
 | `scroll` | Scroll page up/down |
 | `wait_for` | Wait for element to appear |
+| `insert_text` | Fast native text insert (React/Vue compatible) |
+| `click_at` | Fast click at exact pixel coordinates |
 | `print_pdf` | Print page as PDF |
 | `delegate` | Delegate sub-task to another agent |
 | `signin_start` | Start sign-in flow for a website (auto-detects login form) |
 | `signin_2fa` | Submit 2FA/verification code |
 | `signin_auto` | Auto sign-in using saved credential profile (handles TOTP) |
+| `workflow_list` | List all n8n workflows |
+| `workflow_create` | Create n8n workflow from JSON |
+| `workflow_run` | Trigger n8n workflow execution |
+| `workflow_status` | Check workflow execution history |
+| `workflow_delete` | Delete an n8n workflow |
 
 ## Configuration
 
@@ -256,7 +316,12 @@ All settings use `ALPHABETTY_` prefix environment variables:
 | `ALPHABETTY_DB_PATH` | `/data/alphabetty.db` | SQLite database path |
 | `ALPHABETTY_PORT` | `7700` | FastAPI port |
 | `ALPHABETTY_UPLOAD_DIR` | `/uploads` | File upload directory |
+| `ALPHABETTY_SECRET_KEY` | `change-me-in-production` | JWT secret |
+| `ALPHABETTY_N8N_URL` | `http://n8n:5678` | n8n instance URL |
+| `ALPHABETTY_N8N_API_KEY` | — | n8n public API key (JWT token) |
+| `ALPHABETTY_API_KEY` | — | Static API key for external access |
 | `ALPHABETTY_AGENT_ENDPOINTS` | — | Comma-separated `name=url` for outbound agent delegation |
+| `ALPHABETTY_BOOTSTRAP_TOKEN` | `alphabetty-bootstrap-secret` | Token for session leasing |
 
 ## Project Structure
 
@@ -264,16 +329,19 @@ All settings use `ALPHABETTY_` prefix environment variables:
 alphabetty/
 ├── app.py              # FastAPI app factory, DB engine, router registration
 ├── config.py           # Pydantic settings (env vars with ALPHABETTY_ prefix)
-├── mcp_server.py       # MCP server (stdio, HTTP proxy, 49 tools)
+├── mcp_server.py       # MCP server (stdio, HTTP proxy, 55 tools)
 ├── requirements.txt
 ├── Dockerfile          # Multi-service: FastAPI + Chrome + Xvfb
-├── docker-compose.yml
+├── docker-compose.yml  # alphabetty + n8n sidecar
+├── deploy-oracle.sh    # Oracle Cloud Free Tier setup
 ├── api/                # FastAPI routers
 │   ├── chat.py         #   Chat + conversation CRUD (SSE streaming)
 │   ├── search.py       #   SearXNG search
 │   ├── cdp.py          #   Chrome CDP control, tabs, macros, recording, YouTube, viewport
 │   ├── research.py     #   Deep research pipeline
-│   ├── agent.py        #   Autonomous agent (16 tools, planning, reflection)
+│   ├── agent.py        #   Autonomous agent (25 tools, smart routing, planning, reflection)
+│   ├── auth.py         #   Auth endpoints (login, register, session leasing, JWT refresh)
+│   ├── workflows.py    #   n8n workflow CRUD, run, executions, health
 │   ├── events.py       #   SSE event stream endpoints
 │   ├── files.py        #   File upload & analysis
 │   ├── images.py       #   Image generation
@@ -283,29 +351,33 @@ alphabetty/
 │   ├── signin.py       #   Sign-in workflow + credential CRUD
 │   └── tools.py        #   REST tools API (OpenAI format, 55 tools)
 ├── core/               # Business logic
-│   ├── llm.py          #   LLM streaming/calling, fallback, tool calling, AGENT_TOOLS
+│   ├── llm.py          #   LLM streaming/calling, fallback, 25 agent tools, smart routing
 │   ├── searxng.py      #   Search with query classification
 │   ├── cdp_bridge.py   #   Chrome DevTools Protocol client (navigate, click, tabs, wait, PDF)
 │   ├── events.py       #   SSE pub/sub event bus (emit/subscribe)
+│   ├── auth.py         #   Auth logic — JWT, API keys, bcrypt, FastAPI dependencies
+│   ├── n8n.py          #   n8n REST API client (CRUD, activate, execute, health)
 │   ├── agent_bridge.py #   Outbound agent calling and delegation
 │   ├── macro.py        #   Macro record/playback (API + browser level)
 │   ├── recording.py    #   Screen recording via CDP screencast → WebM
 │   ├── research_engine.py  # Multi-round research orchestration
 │   ├── signin.py        #   Sign-in workflow (form detection, 2FA, TOTP)
-│   ├── content_extractor.py # URL → clean text extraction
+│   ├── content_extractor.py # URL → clean text extraction (30-min cache)
 │   ├── source_citer.py #   Domain authority + source ranking
 │   ├── graph.py        #   FTS5, entity extraction, knowledge graph
 │   ├── file_analyzer.py #  File text extraction
 │   └── chrome.py       #   Chrome launch + stealth injection
 ├── models/             # SQLAlchemy models
 │   ├── conversation.py #   Conversation, Message, Source
+│   ├── user.py         #   User (auth, API keys, sessions)
 │   ├── space.py        #   Space
 │   ├── macro.py        #   Macro (recorded browser interactions)
 │   ├── credential.py   #   Credential (saved sign-in profiles)
 │   └── graph.py        #   Tag, Entity, EntityEdge, MessageEntity, DomainGraph
 ├── static/             # Frontend (vanilla JS + HTMX + Tailwind)
-│   ├── css/app.css     #   Styles + toast notifications
+│   ├── css/app.css     #   Styles + toast notifications + dashboard
 │   └── js/app.js       #   App core + SSE event stream + toasts
+│   └── js/dashboard.js #   Dashboard (tabs, macros, system status)
 │   └── js/signin.js    #   Sign-in UI panel
 ├── templates/          # Jinja2 partials for HTMX
 └── data/               # SQLite database storage
