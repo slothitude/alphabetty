@@ -11,6 +11,7 @@ from models.conversation import Base
 import models.user  # noqa: F401 — ensure table creation
 import models.macro  # noqa: F401 — ensure table creation
 import models.credential  # noqa: F401 — ensure table creation
+import models.share  # noqa: F401 — ensure table creation
 
 engine = create_async_engine(f"sqlite+aiosqlite:///{settings.db_path}", echo=False)
 async_session = async_sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
@@ -110,6 +111,7 @@ from api.auth import router as auth_router
 from api.workflows import router as workflows_router
 from api.extension import router as extension_router
 from api.download import router as download_router
+from api.share import router as share_router
 
 
 app.include_router(auth_router, prefix="/api/v1")
@@ -129,6 +131,7 @@ app.include_router(signin_router, prefix="/api/v1")
 app.include_router(workflows_router, prefix="/api/v1")
 app.include_router(extension_router, prefix="/api/v1")
 app.include_router(download_router, prefix="/api/v1")
+app.include_router(share_router, prefix="/api/v1")
 
 # Backward compat: also mount all routers at /api (unversioned)
 app.include_router(auth_router, prefix="/api")
@@ -148,6 +151,7 @@ app.include_router(signin_router, prefix="/api")
 app.include_router(workflows_router, prefix="/api")
 app.include_router(extension_router, prefix="/api")
 app.include_router(download_router, prefix="/api")
+app.include_router(share_router, prefix="/api")
 
 
 # ── MCP SSE endpoint for LLM agents (GhostKV, Claude Code, etc.) ────
