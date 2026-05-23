@@ -8,3 +8,4 @@ __pycache__/
 *.db
 build_status.txt
 build.bat
+extension/

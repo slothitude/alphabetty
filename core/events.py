@@ -28,6 +28,8 @@ EVENT_TYPES = {
     "signin.2fa_required",
     "signin.done",
     "signin.failed",
+    "ext.connected",
+    "ext.capture.done",
 }
 
 # ─── Subscribers ───

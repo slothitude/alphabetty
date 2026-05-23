@@ -1,0 +1,32 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Alphabetty Setup</title>
+  <link rel="stylesheet" href="sidepanel.css">
+</head>
+<body class="setup-page">
+  <div class="setup-container">
+    <div class="setup-logo">
+      <img src="icons/icon48.png" alt="Alphabetty" width="48" height="48">
+      <h1>Alphabetty</h1>
+    </div>
+
+    <p class="setup-desc">Connect to your Alphabetty server</p>
+
+    <form id="setup-form">
+      <label for="server-url">Server URL</label>
+      <input type="url" id="server-url" placeholder="http://192.168.0.33:7700" required>
+
+      <label for="api-key">API Key</label>
+      <input type="password" id="api-key" placeholder="alph_..." required>
+
+      <button type="submit" id="connect-btn">Connect</button>
+      <p id="setup-error" class="error-msg" hidden></p>
+    </form>
+  </div>
+
+  <script type="module" src="setup.js"></script>
+</body>
+</html>

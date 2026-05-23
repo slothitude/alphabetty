@@ -1,0 +1,61 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Alphabetty</title>
+  <link rel="stylesheet" href="sidepanel.css">
+</head>
+<body>
+  <!-- Header -->
+  <header class="panel-header">
+    <div class="header-left">
+      <img src="icons/icon16.png" alt="" width="16" height="16">
+      <span class="header-title">Alphabetty</span>
+    </div>
+    <div class="header-right">
+      <span id="connection-dot" class="status-dot disconnected" title="Disconnected"></span>
+      <button id="settings-btn" class="icon-btn" title="Settings">&#9881;</button>
+    </div>
+  </header>
+
+  <!-- Connection bar (shown when disconnected) -->
+  <div id="connection-bar" class="connection-bar" hidden>
+    <span>Not connected</span>
+    <button id="reconnect-btn">Setup</button>
+  </div>
+
+  <!-- Chat area -->
+  <main id="chat-area" class="chat-area">
+    <div id="messages" class="messages"></div>
+  </main>
+
+  <!-- Input area -->
+  <footer class="input-area">
+    <div class="input-row">
+      <select id="mode-select" class="mode-select" title="Response mode">
+        <option value="concise">Concise</option>
+        <option value="detailed">Detailed</option>
+        <option value="creative">Creative</option>
+        <option value="academic">Academic</option>
+        <option value="code">Code</option>
+      </select>
+      <label class="search-toggle" title="Enable web search">
+        <input type="checkbox" id="search-toggle" checked>
+        <span>Search</span>
+      </label>
+    </div>
+    <div class="input-row">
+      <button id="context-btn" class="icon-btn" title="Include page context">&#128196;</button>
+      <textarea id="chat-input" placeholder="Ask anything..." rows="1"></textarea>
+      <button id="send-btn" class="send-btn" title="Send">&#10148;</button>
+    </div>
+    <div class="quick-actions">
+      <button class="quick-btn" data-action="ask-page">Ask about this page</button>
+      <button class="quick-btn" data-action="search-graph">Search graph</button>
+    </div>
+  </footer>
+
+  <script type="module" src="sidepanel.js"></script>
+</body>
+</html>

@@ -1,0 +1,36 @@
+{
+  "manifest_version": 3,
+  "name": "Alphabetty",
+  "version": "0.1.0",
+  "description": "AI research assistant in your browser sidebar",
+  "permissions": ["activeTab", "storage", "scripting", "sidePanel", "contextMenus", "tabs"],
+  "background": {
+    "service_worker": "background.js",
+    "type": "module"
+  },
+  "side_panel": {
+    "default_path": "sidepanel.html"
+  },
+  "action": {
+    "default_icon": {
+      "16": "icons/icon16.png",
+      "48": "icons/icon48.png",
+      "128": "icons/icon128.png"
+    }
+  },
+  "icons": {
+    "16": "icons/icon16.png",
+    "48": "icons/icon48.png",
+    "128": "icons/icon128.png"
+  },
+  "commands": {
+    "_execute_action": {
+      "suggested_key": { "default": "Ctrl+Shift+A" },
+      "description": "Toggle sidebar"
+    },
+    "capture-page": {
+      "suggested_key": { "default": "Ctrl+Shift+C" },
+      "description": "Capture page context"
+    }
+  }
+}
