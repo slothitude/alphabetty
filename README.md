@@ -147,12 +147,29 @@ Restart Claude Code — all 57 tools appear as `mcp__alphabetty__*`.
 
 1. Open Chrome → `chrome://extensions` → enable **Developer mode**
 2. Click **Load unpacked** → select the `extension/` directory
-3. Navigate to your Alphabetty instance and log in
+3. Navigate to any Alphabetty instance and log in
 4. Click the extension icon → sidebar opens and auto-connects (no setup needed)
 
-Manual setup (for connecting to a different instance): click the gear icon in the sidebar, enter server URL and API key.
+**Supported instances:**
 
-The extension adds a sidebar chat, page context injection, right-click "Ask Alphabetty about..." context menu, and a WebSocket command relay that lets the server control the active tab. Agents can use `ext_execute` to run JavaScript, click elements, type text, navigate, and read page content on the user's actual browser.
+| Instance | URL |
+|----------|-----|
+| Rog (dev) | `http://localhost:7700` |
+| Lappy (LAN) | `http://192.168.0.33:7700` |
+| Oracle (cloud) | `https://alphabetty.ddns.net` |
+| Oracle (direct) | `https://152.69.184.137` |
+
+The extension stores one connection at a time — switching instances auto-handshakes to the new one. Each instance has its own user accounts (users are not shared).
+
+Manual setup (non-Alphabetty pages or custom URLs): click the gear icon in the sidebar, enter server URL and API key.
+
+**Features:**
+- Sidebar chat with SSE streaming responses
+- Page context injection (URL, title, description, headings, selected text)
+- Right-click context menu: "Ask Alphabetty about '%s'"
+- WebSocket command relay — server can control the user's tab in real-time
+- Agent tools (`ext_status`, `ext_execute`) for remote tab control via MCP/REST
+- Commands: evaluate (JS in page context), click, type, navigate, getDOM, getText
 
 ### REST API (any agent)
 
