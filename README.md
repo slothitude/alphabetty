@@ -16,7 +16,7 @@ Alphabetty is a self-hosted AI platform that combines web search, AI chat, headl
 - **Macro Recording** — Record and replay browser interactions (API-level and browser-level) with variable interpolation, conditionals, error recovery, and timing-preserving playback. Screen recording via CDP screencast.
 - **Sign-In Workflow** — Automated sign-in for any website with form detection, multi-step support (Google-style email→password), 2FA handling (manual code entry + automatic TOTP via pyotp), and saved credential profiles for one-click re-authentication.
 - **Workflow Automation** — n8n sidecar for persistent automation: scheduled tasks, webhooks, API orchestration, data pipelines, and multi-step workflows with branching/loops. Create workflows via natural language through the agent or MCP tools.
-- **Swarm Architecture** — Run multiple instances across machines (LAN + cloud) coordinated via MCP layer. Each instance operates independently with shared tool surface.
+- **Swarm Architecture** — Capability-aware inter-instance routing. Each instance declares what it can do (browser, GPU, search, etc.) and tool calls automatically route to the right peer. Circuit breaker protects against failures. Background health checks keep peer state current.
 - **Multi-User Auth** — JWT cookies + API keys with user isolation. Ephemeral session users for CI/CD agents. Admin, demo, and custom user accounts.
 - **Agent-to-Agent Connectivity** — SSE event bus for real-time notifications. Outbound agent bridge to delegate tasks to remote agents. External agents subscribe to events via `/api/events`.
 - **Chrome Extension** — In-browser sidebar for AI chat with page context. Auto-connects when on an Alphabetty page (cookie-based handshake, no setup). WebSocket command relay lets the server control the user's actual browser tab — real cookies, real login state, no headless. Agents can execute JavaScript, click, type, navigate, and read page content through the extension.
@@ -63,9 +63,10 @@ Alphabetty is a platform, not just a tool. Here are some possibilities:
 - "Convert this webpage to clean Markdown" — content extraction with 30-min cache
 
 ### Multi-Instance Coordination
-- **Oracle** (always-on cloud): scheduled workflows, webhooks, persistent automation
-- **Lappy** (LAN heavyweight): browser-heavy tasks, GPU inference, video processing
+- **Oracle** (always-on cloud): scheduled workflows, webhooks, persistent automation — routes browser tasks to Lappy
+- **Lappy** (LAN heavyweight): browser-heavy tasks, GPU inference, video processing, image generation
 - **Rog** (dev station): local testing, development, ad-hoc research
+- Swarm routing is transparent — agents don't know or care which instance executes their tool calls
 
 ## Architecture
 
@@ -79,31 +80,40 @@ Alphabetty is a platform, not just a tool. Here are some possibilities:
 ┌─────────────┐     │  ├── SSE Event Bus (page.load, research.done)│
 │  MCP Server  │◂────┤  ├── Agent Bridge (outbound delegation)     │
 │  (stdio)     │     │  ├── n8n Workflows (automation sidecar)     │
-│  57 tools    │     │  ├── Multi-User Auth (JWT + API keys)       │
-└─────────────┘     │  ├── Extension WS (tab control relay)        │
-                    │  └── Spaces / Export                         │
-┌─────────────┐     │                                              │
-│  Chrome Ext  │     │  Extension API                               │
-│  (sidebar)   │◂───▸│  WS  /api/v1/ext/ws  (command relay)       │
-│  WebSocket   │     │  POST /api/v1/ext/execute                   │
-└─────────────┘     └──────────────────────────────────────────────┘
-┌─────────────┐     ┌─────────────┐
-│  Claude Code │     │  n8n Sidecar │
-│  GPT / Other │────▸│  :5678       │◂────┤
-└─────────────┘     └─────────────┘     │
-                    ┌─────────────┐     │ SSE Event Stream
-                    │  Remote Agent│     │ /api/events
-                    │  (delegate)  │◂────┘
-                    └─────────────┘
-│  Remote Agent│
-│  (delegate)  │◂──── agent_bridge ──HTTP──▸ external MCP servers
-└─────────────┘
+│  59 tools    │     │  ├── Multi-User Auth (JWT + API keys)       │
+└─────────────┘     │  ├── Provider Router (multi-model LLM)       │
+                    │  ├── Swarm Router (inter-instance routing)   │
+┌─────────────┐     │  ├── Extension WS (tab control relay)        │
+│  Chrome Ext  │     │  └── Spaces / Export                         │
+│  (sidebar)   │◂───▸│                                              │
+│  WebSocket   │     │  Extension API                               │
+└─────────────┘     │  WS  /api/v1/ext/ws  (command relay)       │
+                    │  POST /api/v1/ext/execute                   │
+┌─────────────┐     └──────────────────────────────────────────────┘
+│  Claude Code │     ┌─────────────┐
+│  GPT / Other │────▸│  n8n Sidecar │
+└─────────────┘     │  :5678       │◂──── SSE Event Stream
+                    └─────────────┘      /api/events
+
+┌─────────────────── Swarm Routing ───────────────────┐
+│                                                       │
+│  Oracle (cloud)          Lappy (LAN)                  │
+│  caps: llm_light,search  caps: browser,gpu,llm_heavy │
+│        ↓ routes browse →→→    search,image_gen        │
+│                                                       │
+│  GET /api/v1/swarm/status  (peer discovery)           │
+│  POST /api/v1/swarm/execute (remote tool exec)        │
+│  POST /api/v1/swarm/check   (force health refresh)    │
+│  X-Swarm-Key header auth                             │
+└───────────────────────────────────────────────────────┘
 ```
 
-1. **MCP Server** (`mcp_server.py`) — Stdio transport, HTTP proxy to running app. For Claude Code, Cursor, and any MCP-compatible client. 57 tools.
+1. **MCP Server** (`mcp_server.py`) — Stdio transport, HTTP proxy to running app. For Claude Code, Cursor, and any MCP-compatible client. 59 tools.
 2. **REST Tools API** (`/api/v1/tools`) — OpenAI-format tool definitions + dispatch endpoint. For any agent with function calling.
 3. **SSE Event Stream** (`/api/events`) — Real-time event notifications. External agents subscribe to page loads, research completion, macro finishes, etc.
 4. **n8n Sidecar** (`:5678`) — Persistent workflow automation. Scheduled tasks, webhooks, API orchestration. Controlled via agent/MCP tools or n8n UI.
+5. **Swarm Router** (`core/swarm.py`) — Capability-aware inter-instance routing. Agents transparently delegate tool calls to peers with the right hardware.
+6. **Provider Router** (`core/providers.py`) — Multi-model LLM routing across Z.ai, OpenRouter, NVIDIA NIM, and Ollama with circuit breaker and fallback chains.
 
 ## Quick Start
 
@@ -206,7 +216,7 @@ curl -N http://localhost:7700/api/events/research.done
 
 Event types: `page.loaded`, `research.done`, `macro.done`, `recording.done`, `youtube.playing`, `agent.done`, `tab.created`, `signin.started`, `signin.2fa_required`, `signin.done`, `signin.failed`
 
-## Tool Catalog (57 Tools)
+## Tool Catalog (59 Tools)
 
 ### Research & Search
 | Tool | Description |
@@ -310,6 +320,18 @@ Event types: `page.loaded`, `research.done`, `macro.done`, `recording.done`, `yo
 | `ext_status` | Check if extension is connected |
 | `ext_execute` | Run command on user's tab: evaluate, click, type, navigate, getDOM, getText |
 
+### Swarm
+| Tool | Description |
+|------|-------------|
+| `swarm_status` | Get instance capabilities and peer health |
+| `swarm_execute` | Execute a tool on a remote peer via swarm transport |
+
+### Models
+| Tool | Description |
+|------|-------------|
+| `models_list` | List all available LLM models across providers |
+| `models_refresh` | Force refresh model lists from all providers |
+
 ## Agent Tools (25 Internal Tools)
 
 The autonomous agent has access to these tools for multi-step research and automation:
@@ -366,6 +388,12 @@ All settings use `ALPHABETTY_` prefix environment variables:
 | `ALPHABETTY_API_KEY` | — | Static API key for external access |
 | `ALPHABETTY_AGENT_ENDPOINTS` | — | Comma-separated `name=url` for outbound agent delegation |
 | `ALPHABETTY_BOOTSTRAP_TOKEN` | `alphabetty-bootstrap-secret` | Token for session leasing |
+| `ALPHABETTY_OPENROUTER_API_KEY` | — | OpenRouter API key (free models) |
+| `ALPHABETTY_NVIDIA_API_KEY` | — | NVIDIA NIM API key |
+| `ALPHABETTY_SWARM_NAME` | — | This instance's identity (e.g. "oracle", "lappy") |
+| `ALPHABETTY_SWARM_CAPS` | — | Comma-separated capabilities (browser,gpu,llm_heavy,search,image_gen) |
+| `ALPHABETTY_SWARM_PEERS` | — | Comma-separated `name=url` peer pairs |
+| `ALPHABETTY_SWARM_KEY` | — | Shared auth key for inter-instance calls |
 
 ## Project Structure
 
@@ -378,12 +406,14 @@ alphabetty/
 ├── Dockerfile          # Multi-service: FastAPI + Chrome + Xvfb
 ├── docker-compose.yml  # alphabetty + n8n sidecar
 ├── deploy-oracle.sh    # Oracle Cloud Free Tier setup
+├── deploy-lappy.bat    # Lappy LAN deploy (Windows)
 ├── api/                # FastAPI routers
 │   ├── chat.py         #   Chat + conversation CRUD (SSE streaming)
 │   ├── search.py       #   SearXNG search
 │   ├── cdp.py          #   Chrome CDP control, tabs, macros, recording, YouTube, viewport
 │   ├── research.py     #   Deep research pipeline
 │   ├── agent.py        #   Autonomous agent (25 tools, smart routing, planning, reflection)
+│   ├── swarm.py        #   Swarm REST endpoints (status, execute, llm, check)
 │   ├── auth.py         #   Auth endpoints (login, register, session leasing, JWT refresh)
 │   ├── workflows.py    #   n8n workflow CRUD, run, executions, health
 │   ├── events.py       #   SSE event stream endpoints
@@ -403,6 +433,8 @@ alphabetty/
 │   ├── auth.py         #   Auth logic — JWT, API keys, bcrypt, FastAPI dependencies
 │   ├── n8n.py          #   n8n REST API client (CRUD, activate, execute, health)
 │   ├── agent_bridge.py #   Outbound agent calling and delegation
+│   ├── providers.py    #   Multi-model LLM provider router (Z.ai, OpenRouter, NVIDIA, Ollama)
+│   ├── swarm.py        #   Inter-instance swarm router (capability matching, circuit breaker)
 │   ├── macro.py        #   Macro record/playback (API + browser level)
 │   ├── recording.py    #   Screen recording via CDP screencast → WebM
 │   ├── research_engine.py  # Multi-round research orchestration
@@ -439,12 +471,69 @@ alphabetty/
 
 - **Backend:** FastAPI, SQLAlchemy (async), SQLite + FTS5, aiosqlite
 - **Frontend:** Vanilla JS, HTMX, Tailwind CSS
-- **AI:** Z.ai GLM-5.1 (primary), Ollama (fallback)
+- **AI:** Z.ai GLM-5.1 (primary), OpenRouter (free), NVIDIA NIM, Ollama (local fallback)
 - **Search:** SearXNG (self-hosted)
 - **Browser:** Headless Chrome via CDP with stealth injection
 - **Images:** ComfyUI / FLUX pipeline
 - **MCP:** FastMCP (stdio transport)
 - **Deploy:** Docker (Chrome + Xvfb + FastAPI in one container)
+
+## Deploying
+
+Both instances use git-based deployment — push from Rog, pull and rebuild on target.
+
+### Oracle Cloud (always-on)
+
+```bash
+# From Rog
+ssh -i ~/.oci/alphabetty_ssh_key ubuntu@152.69.184.137
+cd /opt/alphabetty && git stash && git pull && docker compose up --build --force-recreate -d
+```
+
+First-time setup: `bash deploy-oracle.sh` (swap, Docker, clone, override, firewall).
+
+### Lappy (LAN heavyweight)
+
+```bash
+# From Rog via paramiko
+python -c "import sys; sys.path.insert(0,'C:/Users/aaron/Desktop'); import lappy_ssh as ssh; print(ssh.run_lappy(r'cmd /c \"C:\Users\aaron\Desktop\alphabetty\deploy-lappy.bat\"', timeout=600)[0])"
+```
+
+Or SSH into Lappy and run `deploy-lappy.bat`.
+
+### Swarm Config
+
+Each instance declares capabilities via env vars in `docker-compose.override.yml`:
+
+| Instance | Caps | Peer |
+|----------|------|------|
+| Oracle | `llm_light,search` | `lappy=http://100.84.161.63:7700` (Tailscale) |
+| Lappy | `browser,gpu,llm_heavy,search,image_gen` | `oracle=http://152.69.184.137:7700` |
+
+Verify: `curl http://<instance>:7700/api/v1/swarm/status`
+
+## Future Direction
+
+### Near-term
+
+- **Swarm LLM load balancing** — distribute LLM calls to the instance with the most capable/available provider pool. Oracle routes agent queries to Lappy's Ollama for heavy inference.
+- **Shared auth** — JWT validation across instances so one login works on the whole swarm. Currently each instance has independent users.
+- **Swarm-aware MCP** — single MCP endpoint that fans out to the right instance. Claude Code talks to one URL, swarm decides where each tool runs.
+- **n8n interconnect** — Oracle n8n calls Lappy API for browser tasks via webhook HTTP Request nodes (zero new code, just workflow config).
+
+### Medium-term
+
+- **Streaming swarm** — pipe SSE/LLM streams across instances instead of buffering full responses. Enables real-time agent collaboration.
+- **Swarm state sync** — lightweight replicated KV store for shared state (conversation metadata, task queues, health telemetry) without a shared database.
+- **Auto-discovery** — mDNS or Tailscale-based peer discovery instead of static peer config. New instances join the swarm by broadcasting their capabilities.
+- **Task routing intelligence** — ML-based routing that learns from historical performance (which instance handles browse faster? which model is better for research?). Tracks latency and success rates per tool per peer.
+
+### Long-term vision
+
+- **Swarm as a mesh** — any number of instances, any topology. Rog joins temporarily for dev, drops out. Oracle is always-on. Pi runs lightweight tasks. Phone joins for quick queries.
+- **Agent marketplace** — agents register capabilities and availability on the swarm. Other agents discover and delegate to them. Like a service mesh but for AI agents.
+- **Self-healing** — instances detect degradation (Chrome crash, Ollama OOM) and auto-migrate workloads to healthy peers. Failed tasks resume on another instance.
+- **Federated knowledge graph** — conversations and research persist across the swarm. Query from any instance, get results from all.
 
 ## License
 

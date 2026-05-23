@@ -1,0 +1,31 @@
+# Lappy docker-compose.override.yml template
+# Copy to docker-compose.override.yml and fill in your API keys
+services:
+  alphabetty:
+    environment:
+      - ALPHABETTY_LLM_URL=https://api.z.ai/api/coding/paas/v4/chat/completions
+      - ALPHABETTY_LLM_MODEL=glm-5.1
+      - ALPHABETTY_LLM_API_KEY=your-zai-key
+      - ALPHABETTY_SEARXNG_URL=http://192.168.0.33:8888
+      - ALPHABETTY_OLLAMA_URL=http://192.168.0.33:11434/v1/chat/completions
+      - ALPHABETTY_ROUTER_URL=http://192.168.0.33:4000
+      - ALPHABETTY_N8N_URL=http://n8n:5678
+      - ALPHABETTY_N8N_API_KEY=your-n8n-jwt-token
+      - ALPHABETTY_NVIDIA_API_KEY=your-nvidia-key
+      - ALPHABETTY_OPENROUTER_API_KEY=your-openrouter-key
+      - ALPHABETTY_SECRET_KEY=change-me-in-production
+      - ALPHABETTY_DB_PATH=/data/alphabetty.db
+      - ALPHABETTY_DEMO_ENABLED=true
+      - ALPHABETTY_MCP_SSE=true
+      - ALPHABETTY_SWARM_NAME=lappy
+      - ALPHABETTY_SWARM_CAPS=browser,gpu,llm_heavy,search,image_gen
+      - ALPHABETTY_SWARM_PEERS=oracle=http://152.69.184.137:7700
+      - ALPHABETTY_SWARM_KEY=your-swarm-shared-key
+
+  n8n:
+    environment:
+      - N8N_INSTANCE_OWNER_MANAGED_BY_ENV=true
+      - N8N_INSTANCE_OWNER_EMAIL=admin@alphabetty.local
+      - N8N_INSTANCE_OWNER_PASSWORD_HASH=$$2b$$12$$your-bcrypt-hash-here
+      - N8N_INSTANCE_OWNER_FIRST_NAME=Aaron
+      - N8N_INSTANCE_OWNER_LAST_NAME=King
