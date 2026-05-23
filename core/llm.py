@@ -462,6 +462,35 @@ AGENT_TOOLS = [
             },
         },
     },
+    {
+        "type": "function",
+        "function": {
+            "name": "download_save",
+            "description": "Download a file from a URL and save it to the server's download directory. Use this to persist files to disk for later access.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "url": {"type": "string", "description": "URL to download"},
+                    "filename": {"type": "string", "description": "Optional filename override"},
+                    "subdir": {"type": "string", "description": "Optional subdirectory within the download folder"},
+                },
+                "required": ["url"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "download_list",
+            "description": "List files saved in the server's download directory.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "subdir": {"type": "string", "description": "Optional subdirectory to list"},
+                },
+            },
+        },
+    },
 ]
 
 AGENT_SYSTEM = """You are Alphabetty, an autonomous AI research agent with full web browsing and automation capabilities.
@@ -700,6 +729,7 @@ _TOOL_GROUPS = {
     "core": {
         "search", "browse", "extract", "click", "type_text", "screenshot",
         "scroll", "wait_for", "tab_list", "tab_new", "delegate", "download",
+        "download_save", "download_list",
     },
     "media": {
         "youtube_play", "video_play",
@@ -879,7 +909,11 @@ def build_system_prompt(tools: list[dict]) -> str:
     if "print_pdf" in available:
         utility_tools.append("- **print_pdf()** — Print the current page as PDF")
     if "download" in available:
-        utility_tools.append("- **download(url, filename)** — Download a file from a URL")
+        utility_tools.append("- **download(url, filename)** — Download a file from a URL (returns download link)")
+    if "download_save" in available:
+        utility_tools.append("- **download_save(url, filename, subdir)** — Download and save file to disk")
+    if "download_list" in available:
+        utility_tools.append("- **download_list(subdir)** — List saved files in download directory")
 
     if utility_tools:
         sections.append("### Utility\n" + "\n".join(utility_tools))

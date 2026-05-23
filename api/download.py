@@ -1,14 +1,15 @@
-"""Download proxy — stream any URL as a file attachment."""
+"""Download proxy — stream any URL as a file attachment or save to disk."""
 
 import logging
+from pathlib import Path, PurePosixPath
 from urllib.parse import urlparse, unquote
-from pathlib import PurePosixPath
 
 import httpx
 from fastapi import APIRouter, Depends, Query
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 
+from config import settings
 from core.auth import get_current_user
 from models.user import User
 
@@ -140,3 +141,96 @@ async def download_cdp(
         return {"error": f"Upstream returned {e.response.status_code}", "url": target_url}
     except httpx.RequestError as e:
         return {"error": f"Failed to fetch: {e}", "url": target_url}
+
+
+class SaveRequest(BaseModel):
+    url: str
+    filename: str | None = None
+    subdir: str | None = None  # optional subdirectory within download_dir
+
+
+@router.post("/download/save")
+async def download_save(
+    req: SaveRequest,
+    user: User = Depends(get_current_user),
+):
+    """Download a URL and save it to the host-mounted volume. Returns the saved file path and metadata."""
+    save_dir = Path(settings.download_dir)
+    if req.subdir:
+        # Sanitize: no path traversal
+        safe_subdir = PurePosixPath(req.subdir).parts  # strips .. etc
+        save_dir = save_dir.joinpath(*safe_subdir)
+    save_dir.mkdir(parents=True, exist_ok=True)
+
+    try:
+        async with httpx.AsyncClient(
+            timeout=httpx.Timeout(120.0, connect=10.0),
+            follow_redirects=True,
+        ) as client:
+            # Head to get filename + size check
+            head = await client.head(req.url)
+            head.raise_for_status()
+
+            content_length = head.headers.get("content-length")
+            if content_length and int(content_length) > MAX_SIZE:
+                return {"error": f"File too large ({int(content_length) // (1024*1024)} MB). Limit is {MAX_SIZE // (1024*1024)} MB."}
+
+            filename = req.filename or _filename_from_response(req.url, head)
+            content_type = head.headers.get("content-type", "application/octet-stream")
+            dest = save_dir / filename
+
+            # Stream to file
+            total = 0
+            async with client.stream("GET", req.url) as resp:
+                resp.raise_for_status()
+                with open(dest, "wb") as f:
+                    async for chunk in resp.aiter_bytes(CHUNK_SIZE):
+                        f.write(chunk)
+                        total += len(chunk)
+                        if total > MAX_SIZE:
+                            dest.unlink(missing_ok=True)
+                            return {"error": "File exceeded size limit during download"}
+
+            return {
+                "filename": filename,
+                "path": str(dest),
+                "size_bytes": total,
+                "content_type": content_type,
+                "url": req.url,
+            }
+
+    except httpx.HTTPStatusError as e:
+        return {"error": f"Upstream returned {e.response.status_code}", "url": req.url}
+    except httpx.RequestError as e:
+        return {"error": f"Failed to fetch: {e}", "url": req.url}
+
+
+@router.get("/download/files")
+async def download_list(
+    subdir: str = "",
+    user: User = Depends(get_current_user),
+):
+    """List files saved in the download directory."""
+    base = Path(settings.download_dir)
+    target = base / subdir if subdir else base
+
+    # Safety: must be within download_dir
+    try:
+        target.resolve().relative_to(base.resolve())
+    except ValueError:
+        return {"error": "Path traversal not allowed"}
+
+    if not target.exists():
+        return {"files": [], "path": str(target)}
+
+    files = []
+    for p in sorted(target.iterdir()):
+        if p.is_file():
+            st = p.stat()
+            files.append({
+                "name": p.name,
+                "size_bytes": st.st_size,
+                "modified": st.st_mtime,
+            })
+
+    return {"files": files, "path": str(target), "count": len(files)}

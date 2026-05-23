@@ -984,7 +984,6 @@ async def download_proxy(url: str, filename: str = "") -> str:
         ct = r.headers.get("content-type", "")
         cd = r.headers.get("content-disposition", "")
         size = len(r.content)
-        # Extract filename from Content-Disposition
         fname = filename or "download"
         if "filename=" in cd:
             for part in cd.split(";"):
@@ -998,6 +997,37 @@ async def download_proxy(url: str, filename: str = "") -> str:
             "download_url": f"{BASE}/api/download/proxy?url={url}",
             "data_base64": base64.b64encode(r.content).decode() if size < 10 * 1024 * 1024 else None,
         })
+
+
+@mcp.tool()
+async def download_save(url: str, filename: str = "", subdir: str = "") -> str:
+    """Download a file from URL and save it to the server's download directory.
+    Returns the saved file path and metadata. Use this to persist files to disk.
+
+    Args:
+        url: URL to download
+        filename: Optional filename override
+        subdir: Optional subdirectory within the download folder
+    """
+    payload = {"url": url}
+    if filename:
+        payload["filename"] = filename
+    if subdir:
+        payload["subdir"] = subdir
+    return json.dumps(await _post("/api/download/save", payload))
+
+
+@mcp.tool()
+async def download_list(subdir: str = "") -> str:
+    """List files saved in the server's download directory.
+
+    Args:
+        subdir: Optional subdirectory to list
+    """
+    params = {}
+    if subdir:
+        params["subdir"] = subdir
+    return json.dumps(await _get("/api/download/files", params))
 
 
 # ─── Extension (control user's browser tab via Chrome extension) ───

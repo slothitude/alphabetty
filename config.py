@@ -26,6 +26,7 @@ class Settings(BaseSettings):
     db_path: str = "/data/alphabetty.db"
     port: int = 7700
     upload_dir: str = "/uploads"
+    download_dir: str = "/data/downloads"
 
     # Auth
     secret_key: str = "change-me-in-production"

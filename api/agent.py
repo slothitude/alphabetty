@@ -351,6 +351,28 @@ async def execute_tool(name: str, args: dict, session: AgentSession | None = Non
                 "message": f"File ready for download at: {download_url}",
             }
 
+        elif name == "download_save":
+            import httpx as _httpx
+            async with _httpx.AsyncClient(timeout=_httpx.Timeout(120.0, connect=10.0)) as client:
+                payload = {"url": args["url"]}
+                if args.get("filename"):
+                    payload["filename"] = args["filename"]
+                if args.get("subdir"):
+                    payload["subdir"] = args["subdir"]
+                r = await client.post("http://localhost:7700/api/download/save", json=payload)
+                result = r.json()
+            return {"tool": "download_save", **result}
+
+        elif name == "download_list":
+            import httpx as _httpx
+            params = {}
+            if args.get("subdir"):
+                params["subdir"] = args["subdir"]
+            async with _httpx.AsyncClient(timeout=30.0) as client:
+                r = await client.get("http://localhost:7700/api/download/files", params=params)
+                result = r.json()
+            return {"tool": "download_list", **result}
+
         else:
             return {"error": f"Unknown tool: {name}"}
 
@@ -536,6 +558,21 @@ def format_tool_result_for_llm(tool_result: dict) -> str:
         if tool_result.get("error"):
             return f"Download failed: {tool_result['error']}"
         return f"File ready for download: {tool_result.get('download_url', '')}"
+
+    elif tool == "download_save":
+        if tool_result.get("error"):
+            return f"Save failed: {tool_result['error']}"
+        size = tool_result.get("size_bytes", 0)
+        return f"Saved: {tool_result.get('path', '?')} ({size:,} bytes, {tool_result.get('content_type', 'unknown')})"
+
+    elif tool == "download_list":
+        files = tool_result.get("files", [])
+        if not files:
+            return "Download directory is empty"
+        lines = [f"Saved files ({len(files)}):"]
+        for f in files:
+            lines.append(f"  - {f['name']} ({f['size_bytes']:,} bytes)")
+        return "\n".join(lines)
 
     return json.dumps(tool_result)
 
