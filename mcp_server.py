@@ -960,6 +960,46 @@ async def upload_file_url(selector: str, file_url: str, tab_id: str = "") -> str
     return json.dumps(await _post("/api/cdp/upload-url", payload))
 
 
+# ─── Download Proxy ───
+
+@mcp.tool()
+async def download_proxy(url: str, filename: str = "") -> str:
+    """Download a file or image from any URL. Streams it back as a file attachment.
+    Returns the download URL and metadata.
+
+    Args:
+        url: URL to download
+        filename: Optional filename override
+    """
+    params = {"url": url}
+    if filename:
+        params["filename"] = filename
+    async with httpx.AsyncClient(timeout=httpx.Timeout(120.0, connect=10.0)) as client:
+        r = await client.get(f"{BASE}/api/download/proxy", params=params, headers=_headers())
+        if r.status_code >= 400:
+            try:
+                return json.dumps(r.json())
+            except Exception:
+                return json.dumps({"error": f"HTTP {r.status_code}"})
+        ct = r.headers.get("content-type", "")
+        cd = r.headers.get("content-disposition", "")
+        size = len(r.content)
+        # Extract filename from Content-Disposition
+        fname = filename or "download"
+        if "filename=" in cd:
+            for part in cd.split(";"):
+                part = part.strip()
+                if part.startswith("filename="):
+                    fname = part.split("=", 1)[1].strip().strip('"').strip("'")
+        return json.dumps({
+            "filename": fname,
+            "content_type": ct,
+            "size_bytes": size,
+            "download_url": f"{BASE}/api/download/proxy?url={url}",
+            "data_base64": base64.b64encode(r.content).decode() if size < 10 * 1024 * 1024 else None,
+        })
+
+
 # ─── Extension (control user's browser tab via Chrome extension) ───
 
 async def ext_status() -> str:

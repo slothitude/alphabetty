@@ -447,6 +447,21 @@ AGENT_TOOLS = [
             },
         },
     },
+    {
+        "type": "function",
+        "function": {
+            "name": "download",
+            "description": "Download a file or image from a URL. Returns the file as a download link for the user.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "url": {"type": "string", "description": "URL to download"},
+                    "filename": {"type": "string", "description": "Optional filename override"},
+                },
+                "required": ["url"],
+            },
+        },
+    },
 ]
 
 AGENT_SYSTEM = """You are Alphabetty, an autonomous AI research agent with full web browsing and automation capabilities.
@@ -684,7 +699,7 @@ async def call_llm_with_tools(messages: list[dict], tools: list[dict] | None = N
 _TOOL_GROUPS = {
     "core": {
         "search", "browse", "extract", "click", "type_text", "screenshot",
-        "scroll", "wait_for", "tab_list", "tab_new", "delegate",
+        "scroll", "wait_for", "tab_list", "tab_new", "delegate", "download",
     },
     "media": {
         "youtube_play", "video_play",
@@ -718,7 +733,7 @@ _INTENT_KEYWORDS = {
         "password", "signin",
     ],
     "utility": [
-        "pdf", "print", "export",
+        "pdf", "print", "export", "download", "save", "fetch file", "save file", "grab file",
     ],
     "workflow": [
         "workflow", "automate", "schedule", "cron", "webhook", "trigger",
@@ -863,9 +878,11 @@ def build_system_prompt(tools: list[dict]) -> str:
         utility_tools.append("- **delegate(task, agent)** — Delegate a sub-task to another agent")
     if "print_pdf" in available:
         utility_tools.append("- **print_pdf()** — Print the current page as PDF")
+    if "download" in available:
+        utility_tools.append("- **download(url, filename)** — Download a file from a URL")
 
     if utility_tools:
-        sections.append("### Delegation\n" + "\n".join(utility_tools))
+        sections.append("### Utility\n" + "\n".join(utility_tools))
 
     workflow_tools = []
     if "workflow_list" in available:

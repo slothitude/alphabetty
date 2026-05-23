@@ -338,6 +338,19 @@ async def execute_tool(name: str, args: dict, session: AgentSession | None = Non
             result = await n8n.delete_workflow(args["workflow_id"])
             return {"tool": "workflow_delete", **result}
 
+        elif name == "download":
+            from urllib.parse import quote as _url_quote
+            url = args["url"]
+            filename = args.get("filename", "")
+            # Use localhost since we're inside the same container
+            download_url = f"http://localhost:7700/api/download/proxy?url={_url_quote(url, safe='')}"
+            return {
+                "tool": "download",
+                "url": url,
+                "download_url": download_url,
+                "message": f"File ready for download at: {download_url}",
+            }
+
         else:
             return {"error": f"Unknown tool: {name}"}
 
@@ -518,6 +531,11 @@ def format_tool_result_for_llm(tool_result: dict) -> str:
         if tool_result.get("error"):
             return f"Workflow delete failed: {tool_result['error']}"
         return "Workflow deleted successfully"
+
+    elif tool == "download":
+        if tool_result.get("error"):
+            return f"Download failed: {tool_result['error']}"
+        return f"File ready for download: {tool_result.get('download_url', '')}"
 
     return json.dumps(tool_result)
 
