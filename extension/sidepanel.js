@@ -1,4 +1,4 @@
-/** Sidebar panel — chat UI, SSE streaming, page context injection. */
+/** Sidebar panel — chat UI, SSE streaming, page context, WebSocket command relay. */
 
 import { MSG_TYPES, STORAGE_KEYS, CONNECTION_STATES } from "./lib/shared.js";
 import { getConfig, streamChat, apiFetch } from "./lib/api.js";
@@ -20,30 +20,124 @@ let conversationId = null;
 let includeContext = false;
 let pageContext = null;
 let isStreaming = false;
-let pendingQuery = null; // from context menu
+let ws = null;
+let wsReconnectTimer = null;
 
 // ── Init ──
 async function init() {
-  const { serverUrl, apiKey } = await getConfig();
+  let { serverUrl, apiKey } = await getConfig();
+
+  // No stored config → try auto-connect (active tab might be Alphabetty)
   if (!serverUrl || !apiKey) {
-    location.href = "setup.html";
-    return;
+    const auto = await tryAutoConnect();
+    if (auto) {
+      serverUrl = auto.serverUrl;
+      apiKey = auto.apiKey;
+    } else {
+      location.href = "setup.html";
+      return;
+    }
   }
+
+  // Connected — open WebSocket for command relay
+  connectWebSocket(serverUrl, apiKey);
   await updateConnectionState();
 }
 
-// ── Connection State ──
+async function tryAutoConnect() {
+  return new Promise((resolve) => {
+    chrome.runtime.sendMessage({ type: "autoConnect" }, (resp) => {
+      if (chrome.runtime.lastError || !resp?.apiKey) {
+        resolve(null);
+      } else {
+        resolve(resp);
+      }
+    });
+  });
+}
+
+// ── WebSocket ──
+
+function connectWebSocket(serverUrl, apiKey) {
+  if (wsReconnectTimer) {
+    clearTimeout(wsReconnectTimer);
+    wsReconnectTimer = null;
+  }
+
+  const wsUrl = serverUrl.replace(/^http/, "ws") + "/api/v1/ext/ws";
+
+  try {
+    ws = new WebSocket(wsUrl);
+  } catch {
+    scheduleReconnect(serverUrl, apiKey);
+    return;
+  }
+
+  ws.onopen = () => {
+    ws.send(JSON.stringify({ type: "auth", token: apiKey }));
+  };
+
+  ws.onmessage = async (event) => {
+    let msg;
+    try { msg = JSON.parse(event.data); } catch { return; }
+
+    if (msg.type === "auth_ok") {
+      setConnectionDot(CONNECTION_STATES.CONNECTED);
+      return;
+    }
+
+    // Server pushed a command → relay to content script via background
+    if (msg.type === "command") {
+      const result = await new Promise((resolve) => {
+        chrome.runtime.sendMessage({
+          type: "executeCommand",
+          command: { action: msg.action, params: msg.params || {} },
+        }, (response) => {
+          resolve(response || { error: "No response from content script" });
+        });
+      });
+
+      if (ws?.readyState === WebSocket.OPEN) {
+        ws.send(JSON.stringify({
+          type: "result",
+          id: msg.id,
+          result: result,
+        }));
+      }
+    }
+  };
+
+  ws.onclose = () => {
+    scheduleReconnect(serverUrl, apiKey);
+  };
+
+  ws.onerror = () => {
+    ws.close();
+  };
+}
+
+function scheduleReconnect(serverUrl, apiKey) {
+  setConnectionDot(CONNECTION_STATES.DISCONNECTED);
+  wsReconnectTimer = setTimeout(() => {
+    connectWebSocket(serverUrl, apiKey);
+  }, 5000);
+}
+
+function setConnectionDot(state) {
+  connectionDot.className = `status-dot ${state}`;
+  connectionBar.hidden = state === CONNECTION_STATES.CONNECTED;
+  sendBtn.disabled = state !== CONNECTION_STATES.CONNECTED;
+}
+
+// ── Connection State (storage-based) ──
+
 async function updateConnectionState() {
   const state = await new Promise((resolve) => {
     chrome.storage.local.get(STORAGE_KEYS.CONNECTION_STATE, (r) => {
       resolve(r[STORAGE_KEYS.CONNECTION_STATE]);
     });
   });
-
-  connectionDot.className = `status-dot ${state || CONNECTION_STATES.DISCONNECTED}`;
-  const connected = state === CONNECTION_STATES.CONNECTED;
-  connectionBar.hidden = connected;
-  sendBtn.disabled = !connected;
+  setConnectionDot(state || CONNECTION_STATES.DISCONNECTED);
 }
 
 chrome.storage.onChanged.addListener((changes) => {
@@ -116,18 +210,15 @@ async function sendMessage() {
   const query = chatInput.value.trim();
   if (!query || isStreaming) return;
 
-  // Add user message to UI
   appendMessage("user", query);
   chatInput.value = "";
   chatInput.style.height = "auto";
 
-  // Fetch fresh context if needed
   let ctx = includeContext ? pageContext : null;
   if (includeContext && !ctx) {
     ctx = await fetchPageContext();
   }
 
-  // Show typing indicator
   const typingEl = appendTyping();
   isStreaming = true;
   sendBtn.disabled = true;
@@ -155,7 +246,6 @@ async function sendMessage() {
       isStreaming = false;
       sendBtn.disabled = false;
 
-      // Add sources
       if (data.sources?.length && assistantEl) {
         const srcDiv = document.createElement("div");
         srcDiv.className = "msg-sources";
@@ -164,7 +254,6 @@ async function sendMessage() {
         assistantEl.appendChild(srcDiv);
       }
 
-      // Add follow-ups
       if (data.follow_ups?.length && assistantEl) {
         const fuDiv = document.createElement("div");
         fuDiv.className = "follow-ups";

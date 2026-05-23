@@ -1,10 +1,50 @@
-/** Background service worker — routing, auth, health checks, context menus. */
+// Background service worker - routing, auth, health, context menus, auto-connect
+// Self-contained, no module imports. Uses world:MAIN to bypass CSP.
 
-import { MSG_TYPES, CONNECTION_STATES, STORAGE_KEYS } from "./lib/shared.js";
-import { getConfig, apiFetch } from "./lib/api.js";
+var STORAGE_KEYS = {
+  SERVER_URL: "serverUrl",
+  API_KEY: "apiKey",
+  CONNECTION_STATE: "connectionState",
+};
+var CONNECTION_STATES = {
+  CONNECTED: "connected",
+  DISCONNECTED: "disconnected",
+  AUTH_FAILED: "auth_failed",
+};
 
-// ── Context Menu ──
-chrome.runtime.onInstalled.addListener(() => {
+function _getConfig() {
+  return new Promise(function (resolve) {
+    chrome.storage.local.get(
+      [STORAGE_KEYS.SERVER_URL, STORAGE_KEYS.API_KEY],
+      function (result) {
+        resolve({
+          serverUrl: (result[STORAGE_KEYS.SERVER_URL] || "").replace(/\/+$/, ""),
+          apiKey: result[STORAGE_KEYS.API_KEY] || "",
+        });
+      }
+    );
+  });
+}
+
+function _apiFetch(path, options) {
+  options = options || {};
+  return _getConfig().then(function (cfg) {
+    if (!cfg.serverUrl || !cfg.apiKey) throw new Error("Not configured");
+    var headers = Object.assign({}, options.headers || {}, {
+      Authorization: "Bearer " + cfg.apiKey,
+      "Content-Type": "application/json",
+    });
+    return fetch(cfg.serverUrl + path, Object.assign({}, options, { headers: headers })).then(
+      function (resp) {
+        if (!resp.ok) throw new Error("HTTP " + resp.status);
+        return resp;
+      }
+    );
+  });
+}
+
+// Context Menu
+chrome.runtime.onInstalled.addListener(function () {
   chrome.contextMenus.create({
     id: "ask-alphabetty",
     title: "Ask Alphabetty about '%s'",
@@ -12,109 +52,184 @@ chrome.runtime.onInstalled.addListener(() => {
   });
 });
 
-chrome.contextMenus.onClicked.addListener((info, tab) => {
+chrome.contextMenus.onClicked.addListener(function (info, tab) {
   if (info.menuItemId === "ask-alphabetty") {
-    // Open side panel and send the selected text as a query
     chrome.sidePanel.open({ tabId: tab.id });
-    // Small delay to let panel load, then send message
-    setTimeout(() => {
-      chrome.runtime.sendMessage({
-        type: MSG_TYPES.OPEN_SIDEBAR,
-        query: info.selectionText,
-      });
+    setTimeout(function () {
+      chrome.runtime.sendMessage({ type: "openSidebar", query: info.selectionText });
     }, 500);
   }
 });
 
-// ── Health Check ──
+// Health Check
 chrome.alarms.create("healthCheck", { periodInMinutes: 1 });
 
-chrome.alarms.onAlarm.addListener(async (alarm) => {
-  if (alarm.name === "healthCheck") {
-    await checkHealth();
-  }
+chrome.alarms.onAlarm.addListener(function (alarm) {
+  if (alarm.name === "healthCheck") checkHealth();
 });
 
-async function checkHealth() {
-  const { serverUrl, apiKey } = await getConfig();
-  if (!serverUrl || !apiKey) {
-    setConnectionState(CONNECTION_STATES.DISCONNECTED);
-    return;
-  }
-
-  try {
-    const resp = await apiFetch("/api/v1/ext/health");
-    const data = await resp.json();
-    if (data.status === "ok") {
-      setConnectionState(CONNECTION_STATES.CONNECTED);
-    } else {
-      setConnectionState(CONNECTION_STATES.AUTH_FAILED);
+function checkHealth() {
+  _getConfig().then(function (cfg) {
+    if (!cfg.serverUrl || !cfg.apiKey) {
+      _setConnectionState(CONNECTION_STATES.DISCONNECTED);
+      return;
     }
+    return _apiFetch("/api/v1/ext/health")
+      .then(function (resp) { return resp.json(); })
+      .then(function (data) {
+        _setConnectionState(
+          data.status === "ok" ? CONNECTION_STATES.CONNECTED : CONNECTION_STATES.AUTH_FAILED
+        );
+      });
+  }).catch(function (e) {
+    _setConnectionState(
+      String(e.message).indexOf("401") >= 0
+        ? CONNECTION_STATES.AUTH_FAILED
+        : CONNECTION_STATES.DISCONNECTED
+    );
+  });
+}
+
+function _setConnectionState(state) {
+  chrome.storage.local.set({ connectionState: state });
+  var badges = {};
+  badges[CONNECTION_STATES.CONNECTED] = { text: "", color: "#22c55e" };
+  badges[CONNECTION_STATES.DISCONNECTED] = { text: "!", color: "#6b7280" };
+  badges[CONNECTION_STATES.AUTH_FAILED] = { text: "!", color: "#ef4444" };
+  var b = badges[state] || badges[CONNECTION_STATES.DISCONNECTED];
+  chrome.action.setBadgeText({ text: b.text });
+  chrome.action.setBadgeBackgroundColor({ color: b.color });
+}
+
+// Handshake function injected into page's main world (bypasses CSP)
+function _handshakeFn() {
+  return fetch("/api/v1/ext/handshake")
+    .then(function (r) {
+      if (!r.ok) throw new Error(r.status);
+      return r.json();
+    })
+    .then(function (data) {
+      return { apiKey: data.apiKey, user: data.user };
+    })
+    .catch(function () { return null; });
+}
+
+// Evaluate function injected into page's main world
+function _evalFn(expression) {
+  try {
+    var r = eval(expression);
+    return { result: r };
   } catch (e) {
-    const state = String(e.message).includes("401")
-      ? CONNECTION_STATES.AUTH_FAILED
-      : CONNECTION_STATES.DISCONNECTED;
-    setConnectionState(state);
+    return { error: e.message };
   }
 }
 
-function setConnectionState(state) {
-  chrome.storage.local.set({ [STORAGE_KEYS.CONNECTION_STATE]: state });
-
-  // Badge
-  const badgeMap = {
-    [CONNECTION_STATES.CONNECTED]: { text: "", color: "#22c55e" },
-    [CONNECTION_STATES.DISCONNECTED]: { text: "!", color: "#6b7280" },
-    [CONNECTION_STATES.AUTH_FAILED]: { text: "!", color: "#ef4444" },
-  };
-  const badge = badgeMap[state] || badgeMap[CONNECTION_STATES.DISCONNECTED];
-  chrome.action.setBadgeText({ text: badge.text });
-  chrome.action.setBadgeBackgroundColor({ color: badge.color });
-}
-
-// ── Message Routing ──
-chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
-  if (message.type === MSG_TYPES.GET_PAGE_CONTEXT) {
-    // Inject content script into active tab and get context
-    (async () => {
-      try {
-        const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
-        if (!tab?.id) {
-          sendResponse({ error: "No active tab" });
-          return;
-        }
-
-        // Inject content script if not already there
-        try {
-          await chrome.scripting.executeScript({
-            target: { tabId: tab.id },
-            files: ["content.js"],
-          });
-        } catch { /* already injected */ }
-
-        // Ask content script for page context
-        const response = await chrome.tabs.sendMessage(tab.id, {
-          type: MSG_TYPES.GET_PAGE_CONTEXT,
-        });
-        sendResponse(response);
-      } catch (e) {
-        sendResponse({ error: e.message });
+// Message Routing
+chrome.runtime.onMessage.addListener(function (message, sender, sendResponse) {
+  if (message.type === "getPageContext") {
+    chrome.scripting.executeScript(
+      { target: { tabId: sender.tab ? sender.tab.id : _getActiveTabId() }, files: ["content.js"] },
+      function () {
+        // re-query since we don't have tab id in this context
       }
-    })();
-    return true; // async sendResponse
+    );
+    // Use executeScript to get page context directly
+    chrome.tabs.query({ active: true, currentWindow: true }, function (tabs) {
+      var tab = tabs[0];
+      if (!tab || !tab.id) { sendResponse({ error: "No active tab" }); return; }
+      chrome.scripting.executeScript(
+        { target: { tabId: tab.id }, files: ["content.js"] },
+        function () {
+          chrome.tabs.sendMessage(tab.id, { type: "getPageContext" }, function (resp) {
+            sendResponse(resp || { error: "No response" });
+          });
+        }
+      );
+    });
+    return true;
   }
 
-  if (message.type === MSG_TYPES.HEALTH_CHECK) {
-    checkHealth().then(() => {
-      chrome.storage.local.get(STORAGE_KEYS.CONNECTION_STATE, (result) => {
-        sendResponse({ state: result[STORAGE_KEYS.CONNECTION_STATE] });
+  // Auto-connect: inject handshake into page's main world (bypasses CSP)
+  if (message.type === "autoConnect") {
+    chrome.tabs.query({ active: true, currentWindow: true }, function (tabs) {
+      var tab = tabs[0];
+      if (!tab || !tab.id || !tab.url || tab.url.indexOf("http") !== 0) {
+        sendResponse(null);
+        return;
+      }
+      chrome.scripting.executeScript({
+        target: { tabId: tab.id },
+        world: "MAIN",
+        func: _handshakeFn,
+      }, function (results) {
+        if (chrome.runtime.lastError) { sendResponse(null); return; }
+        var resp = results && results[0] && results[0].result;
+        if (resp && resp.apiKey) {
+          var serverUrl = new URL(tab.url).origin;
+          chrome.storage.local.set({
+            serverUrl: serverUrl,
+            apiKey: resp.apiKey,
+            connectionState: CONNECTION_STATES.CONNECTED,
+          }, function () {
+            sendResponse({ serverUrl: serverUrl, apiKey: resp.apiKey });
+          });
+        } else {
+          sendResponse(null);
+        }
       });
     });
     return true;
   }
+
+  // Command execution
+  if (message.type === "executeCommand") {
+    chrome.tabs.query({ active: true, currentWindow: true }, function (tabs) {
+      var tab = tabs[0];
+      if (!tab || !tab.id) { sendResponse({ error: "No active tab" }); return; }
+
+      var cmd = message.command;
+
+      // Evaluate runs in main world (page JS context)
+      if (cmd.action === "evaluate") {
+        chrome.scripting.executeScript({
+          target: { tabId: tab.id },
+          world: "MAIN",
+          func: _evalFn,
+          args: [cmd.params.expression],
+        }, function (results) {
+          if (chrome.runtime.lastError) {
+            sendResponse({ error: chrome.runtime.lastError.message });
+          } else {
+            sendResponse((results && results[0] && results[0].result) || { error: "No result" });
+          }
+        });
+        return;
+      }
+
+      // DOM actions run in content script (isolated world)
+      chrome.scripting.executeScript(
+        { target: { tabId: tab.id }, files: ["content.js"] },
+        function () {
+          chrome.tabs.sendMessage(
+            tab.id,
+            { type: "executeCommand", command: cmd },
+            function (resp) {
+              sendResponse(resp || { error: "No response" });
+            }
+          );
+        }
+      );
+    });
+    return true;
+  }
+
+  if (message.type === "healthCheck") {
+    checkHealth();
+    return false;
+  }
 });
 
-// ── Side panel on action click ──
+// Side panel on action click
 chrome.sidePanel.setPanelBehavior({ openPanelOnActionClick: true });
 
 // Initial health check
