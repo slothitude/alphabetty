@@ -323,7 +323,7 @@ class ProviderRouter:
             try:
                 await self._wait_for_slot(provider)
                 mdl = model or self._pick_model(provider)
-                resp = await self._single_call(
+                client, resp = await self._single_call(
                     provider.base_url, provider.api_key, mdl,
                     messages, stream=stream, tools=tools, max_tokens=max_tokens,
                 )
@@ -331,10 +331,16 @@ class ProviderRouter:
                     retry_after = int(resp.headers.get("Retry-After", "60"))
                     self._record_failure(provider, 429, retry_after)
                     last_error = f"{provider.name} rate-limited"
+                    await client.aclose()
                     continue
                 resp.raise_for_status()
                 self._record_success(provider)
-                return resp
+                return client, resp
+            except httpx.HTTPStatusError as e:
+                self._record_failure(provider, e.response.status_code)
+                last_error = str(e)
+                logger.warning(f"Provider {provider.name} failed: {e}, trying next")
+                continue
             except Exception as e:
                 self._record_failure(provider)
                 last_error = str(e)
