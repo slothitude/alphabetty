@@ -360,7 +360,7 @@ class ProviderRouter:
 
         # Prefer known-good chat models for each provider
         preferred = {
-            "openrouter": ["openrouter/owl-alpha", "meta-llama/llama-4-scout:free", "google/gemma-3-27b-it:free"],
+            "openrouter": ["deepseek/deepseek-v4-flash:free", "openrouter/owl-alpha", "google/gemma-3-27b-it:free"],
             "nvidia": ["meta/llama-3.3-70b-instruct", "nvidia/llama-3.1-nemotron-70b-instruct", "mistralai/mixtral-8x22b-instruct-v0.1"],
         }
         prefs = preferred.get(provider.name, [])
