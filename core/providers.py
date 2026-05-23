@@ -364,6 +364,9 @@ class ProviderRouter:
                            tools: list[dict] | None = None,
                            max_tokens: int = 16384) -> httpx.Response:
         """Make a single LLM call to one provider."""
+        # Append /chat/completions if not already in URL
+        if not url.rstrip("/").endswith("/chat/completions"):
+            url = url.rstrip("/") + "/chat/completions"
         payload = {
             "model": model,
             "messages": messages,
