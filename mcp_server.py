@@ -960,6 +960,47 @@ async def upload_file_url(selector: str, file_url: str, tab_id: str = "") -> str
     return json.dumps(await _post("/api/cdp/upload-url", payload))
 
 
+# ─── Extension (control user's browser tab via Chrome extension) ───
+
+async def ext_status() -> str:
+    """Check if the user's Chrome extension is connected. Returns connection state.
+
+    The extension must be installed and have the sidebar open for commands to work.
+    If disconnected, the user needs to open the Alphabetty page and click the extension icon.
+    """
+    return json.dumps(await _get("/api/v1/ext/health"))
+
+
+async def ext_execute(action: str, params: str = "{}") -> str:
+    """Execute a command on the user's browser tab via the Chrome extension.
+
+    Requires the extension to be connected (sidebar open on an Alphabetty page).
+    This controls the user's ACTUAL browser — their cookies, login state, and session.
+    Unlike CDP (headless), the extension sees what the user sees.
+
+    Args:
+        action: One of: evaluate, click, type, navigate, getDOM, getText
+            - evaluate: Run JavaScript expression in page context. Returns the result.
+            - click: Click an element by CSS selector.
+            - type: Type text into an element (handles contenteditable).
+            - navigate: Navigate to a URL.
+            - getDOM: Get page DOM structure (depth param, default 3).
+            - getText: Get visible text content of the page.
+        params: JSON object with action-specific parameters:
+            - evaluate: {"expression": "document.title"}
+            - click: {"selector": "#my-button"}
+            - type: {"selector": "#input", "text": "hello"}
+            - navigate: {"url": "https://example.com"}
+            - getDOM: {"depth": 3}
+            - getText: {}
+    """
+    try:
+        p = json.loads(params)
+    except json.JSONDecodeError:
+        return json.dumps({"error": "Invalid JSON in params"})
+    return json.dumps(await _post("/api/v1/ext/execute", {"action": action, "params": p}))
+
+
 # ─── Session Leasing ───
 
 async def _acquire_session():
