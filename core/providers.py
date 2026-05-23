@@ -350,14 +350,32 @@ class ProviderRouter:
         raise RuntimeError(f"All LLM providers failed. Last error: {last_error}")
 
     def _pick_model(self, provider: Provider) -> str:
-        """Pick a default model from a provider."""
-        if provider.models:
-            return provider.models[0].id
-        if provider.name == "zai":
-            return settings.llm_model
-        if provider.name == "ollama":
-            return settings.ollama_model
-        return ""
+        """Pick a default model from a provider, preferring known-good models."""
+        if not provider.models:
+            if provider.name == "zai":
+                return settings.llm_model
+            if provider.name == "ollama":
+                return settings.ollama_model
+            return ""
+
+        # Prefer known-good chat models for each provider
+        preferred = {
+            "openrouter": ["openrouter/owl-alpha", "meta-llama/llama-4-scout:free", "google/gemma-3-27b-it:free"],
+            "nvidia": ["meta/llama-3.3-70b-instruct", "nvidia/llama-3.1-nemotron-70b-instruct", "mistralai/mixtral-8x22b-instruct-v0.1"],
+        }
+        prefs = preferred.get(provider.name, [])
+        for pref in prefs:
+            for m in provider.models:
+                if m.id == pref:
+                    return m.id
+
+        # Fall back to first model with :free suffix (OpenRouter convention)
+        for m in provider.models:
+            if ":free" in m.id:
+                return m.id
+
+        # Last resort: first available
+        return provider.models[0].id
 
     async def _single_call(self, url: str, api_key: str, model: str,
                            messages: list[dict], stream: bool = False,
