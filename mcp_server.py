@@ -866,6 +866,20 @@ async def workflow_delete(workflow_id: str) -> str:
 # ─── Fast / Raw CDP ───
 
 @mcp.tool()
+async def models_list() -> str:
+    """List all available LLM models across providers (Z.ai, OpenRouter, NVIDIA NIM, Ollama).
+    Returns model IDs, provider names, context lengths, and tool support status."""
+    return json.dumps(await _get("/api/models"))
+
+
+@mcp.tool()
+async def models_refresh() -> str:
+    """Force refresh model lists from all providers.
+    Discovers new models from OpenRouter, NVIDIA NIM, and Ollama."""
+    return json.dumps(await _post("/api/models/refresh"))
+
+
+@mcp.tool()
 async def raw_cdp(method: str, params: str = "{}", tab_id: str = "") -> str:
     """Send any raw CDP protocol command directly to Chrome.
 

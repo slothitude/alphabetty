@@ -67,11 +67,37 @@ async def lifespan(app: FastAPI):
             except Exception as e:
                 _bg_logger.warning(f"Session cleanup failed: {e}")
 
+    async def _provider_refresh():
+        """Periodically refresh model lists from all providers."""
+        while True:
+            await asyncio.sleep(1800)  # Every 30 min
+            try:
+                from core.providers import router as provider_router
+                await provider_router.refresh_models()
+            except Exception as e:
+                _bg_logger.warning(f"Provider model refresh failed: {e}")
+
+    # Startup: discover models from all providers (staggered)
+    async def _discover_staggered(pr, name, delay):
+        if delay:
+            await asyncio.sleep(delay)
+        await pr.refresh_models(name)
+
+    try:
+        from core.providers import router as provider_router
+        provider_router._init_providers()
+        for i, name in enumerate(provider_router.providers):
+            asyncio.create_task(_discover_staggered(provider_router, name, i * 2))
+    except Exception as e:
+        _bg_logger.debug(f"Provider model discovery skipped: {e}")
+
     chrome_task = asyncio.create_task(_chrome_health_check())
     cleanup_task = asyncio.create_task(_session_cleanup())
+    provider_task = asyncio.create_task(_provider_refresh())
     yield
     chrome_task.cancel()
     cleanup_task.cancel()
+    provider_task.cancel()
 
 
 app = FastAPI(title="Alphabetty", lifespan=lifespan)
@@ -112,6 +138,7 @@ from api.workflows import router as workflows_router
 from api.extension import router as extension_router
 from api.download import router as download_router
 from api.share import router as share_router
+from api.models import router as models_router
 
 
 app.include_router(auth_router, prefix="/api/v1")
@@ -132,6 +159,7 @@ app.include_router(workflows_router, prefix="/api/v1")
 app.include_router(extension_router, prefix="/api/v1")
 app.include_router(download_router, prefix="/api/v1")
 app.include_router(share_router, prefix="/api/v1")
+app.include_router(models_router, prefix="/api/v1")
 
 # Backward compat: also mount all routers at /api (unversioned)
 app.include_router(auth_router, prefix="/api")
@@ -152,6 +180,7 @@ app.include_router(workflows_router, prefix="/api")
 app.include_router(extension_router, prefix="/api")
 app.include_router(download_router, prefix="/api")
 app.include_router(share_router, prefix="/api")
+app.include_router(models_router, prefix="/api")
 
 
 # ── MCP SSE endpoint for LLM agents (GhostKV, Claude Code, etc.) ────

@@ -491,6 +491,17 @@ AGENT_TOOLS = [
             },
         },
     },
+    {
+        "type": "function",
+        "function": {
+            "name": "list_models",
+            "description": "List all available LLM models across providers (Z.ai, OpenRouter, NVIDIA NIM, Ollama). Shows model IDs, provider, and capabilities.",
+            "parameters": {
+                "type": "object",
+                "properties": {},
+            },
+        },
+    },
 ]
 
 AGENT_SYSTEM = """You are Alphabetty, an autonomous AI research agent with full web browsing and automation capabilities.
@@ -588,21 +599,53 @@ async def _call_llm_api(messages: list[dict], tools: list[dict] | None = None,
 
 async def stream_llm(messages: list[dict], model: str | None = None,
                      base_url: str | None = None, api_key: str | None = None) -> AsyncIterator[str]:
-    """Stream LLM response as SSE chunks. Falls back from Z.ai to Ollama on failure."""
-    url = base_url or settings.llm_url
-    key = api_key or settings.llm_api_key
-    mdl = model or settings.llm_model
+    """Stream LLM response as SSE chunks. Uses provider router for fallback."""
+    # If explicit overrides provided, use legacy direct-call path
+    if base_url and api_key:
+        async for chunk in _stream_direct(messages, model or settings.llm_model, base_url, api_key):
+            yield chunk
+        return
 
-    payload = {
-        "model": mdl,
-        "messages": messages,
-        "max_tokens": 16384,
-        "stream": True,
-    }
-    headers = {
-        "Authorization": f"Bearer {key}",
-        "Content-Type": "application/json",
-    }
+    # Route through provider router
+    from core.providers import router as provider_router
+    try:
+        client, resp = await provider_router.call(
+            messages, model=model, intent="chat", stream=True,
+        )
+        try:
+            if resp.status_code == 429:
+                raise httpx.HTTPStatusError("429", request=resp.request, response=resp)
+            resp.raise_for_status()
+            model_used = model or "unknown"
+            async for line in resp.aiter_lines():
+                if not line.startswith("data: "):
+                    continue
+                data = line[6:]
+                if data == "[DONE]":
+                    return
+                try:
+                    chunk = json.loads(data)
+                    delta = chunk.get("choices", [{}])[0].get("delta", {})
+                    content = delta.get("content", "")
+                    if content:
+                        yield content
+                    # Capture model from first chunk
+                    if model_used == "unknown":
+                        model_used = chunk.get("model", model_used)
+                except json.JSONDecodeError:
+                    continue
+            logger.debug(f"LLM responded: {model_used} (provider router)")
+        finally:
+            await client.aclose()
+    except RuntimeError as e:
+        logger.error(f"All providers failed: {e}")
+        yield f"[Error: All LLM providers failed — {e}]"
+
+
+async def _stream_direct(messages: list[dict], model: str, url: str, key: str) -> AsyncIterator[str]:
+    """Direct streaming call to a specific URL (legacy path)."""
+    payload = {"model": model, "messages": messages, "max_tokens": 16384, "stream": True}
+    headers = {"Authorization": f"Bearer {key}", "Content-Type": "application/json"}
 
     try:
         async with httpx.AsyncClient(timeout=httpx.Timeout(300.0)) as client:
@@ -626,15 +669,10 @@ async def stream_llm(messages: list[dict], model: str | None = None,
                         continue
                 return
     except Exception as e:
-        logger.warning(f"Primary LLM ({mdl}) failed: {e}, falling back to Ollama ({settings.ollama_model})")
+        logger.warning(f"Direct LLM ({model}) failed: {e}, falling back to Ollama ({settings.ollama_model})")
 
     try:
-        ollama_payload = {
-            "model": settings.ollama_model,
-            "messages": messages,
-            "max_tokens": 16384,
-            "stream": False,
-        }
+        ollama_payload = {"model": settings.ollama_model, "messages": messages, "max_tokens": 16384, "stream": False}
         logger.info(f"LLM fallback: using {settings.ollama_model} via Ollama")
         async with httpx.AsyncClient(timeout=httpx.Timeout(300.0)) as client:
             resp = await client.post(settings.ollama_url, json=ollama_payload,
@@ -651,20 +689,35 @@ async def stream_llm(messages: list[dict], model: str | None = None,
 
 async def call_llm(messages: list[dict], model: str | None = None,
                    base_url: str | None = None, api_key: str | None = None) -> str:
-    """Non-streaming LLM call. Falls back from Z.ai to Ollama."""
-    url = base_url or settings.llm_url
-    key = api_key or settings.llm_api_key
-    mdl = model or settings.llm_model
+    """Non-streaming LLM call. Uses provider router for fallback."""
+    # If explicit overrides provided, use legacy direct-call path
+    if base_url and api_key:
+        return await _call_direct(messages, model or settings.llm_model, base_url, api_key)
 
-    payload = {
-        "model": mdl,
-        "messages": messages,
-        "max_tokens": 16384,
-    }
-    headers = {
-        "Authorization": f"Bearer {key}",
-        "Content-Type": "application/json",
-    }
+    # Route through provider router
+    from core.providers import router as provider_router
+    try:
+        client, resp = await provider_router.call(
+            messages, model=model, intent="planning", stream=False,
+        )
+        try:
+            resp.raise_for_status()
+            data = resp.json()
+            msg = data["choices"][0]["message"]
+            model_used = data.get("model", model or "unknown")
+            logger.debug(f"LLM responded: {model_used} (provider router)")
+            return msg.get("content", "") or msg.get("reasoning_content", "") or ""
+        finally:
+            await client.aclose()
+    except Exception as e:
+        logger.error(f"All providers failed: {e}")
+        return f"[Error: All LLM providers failed]"
+
+
+async def _call_direct(messages: list[dict], model: str, url: str, key: str) -> str:
+    """Direct non-streaming call (legacy path with retries)."""
+    payload = {"model": model, "messages": messages, "max_tokens": 16384}
+    headers = {"Authorization": f"Bearer {key}", "Content-Type": "application/json"}
 
     for attempt in range(3):
         try:
@@ -676,10 +729,10 @@ async def call_llm(messages: list[dict], model: str | None = None,
                 resp.raise_for_status()
                 data = resp.json()
                 msg = data["choices"][0]["message"]
-                logger.debug(f"LLM responded: {mdl} (primary)")
+                logger.debug(f"LLM responded: {model} (primary)")
                 return msg.get("content", "") or msg.get("reasoning_content", "") or ""
         except Exception as e:
-            logger.warning(f"Primary LLM ({mdl}) attempt {attempt+1} failed: {e}")
+            logger.warning(f"Primary LLM ({model}) attempt {attempt+1} failed: {e}")
 
     try:
         ollama_payload = {"model": settings.ollama_model, "messages": messages, "max_tokens": 16384}
@@ -697,29 +750,23 @@ async def call_llm(messages: list[dict], model: str | None = None,
 
 
 async def call_llm_with_tools(messages: list[dict], tools: list[dict] | None = None) -> dict:
-    """Non-streaming LLM call with tool support. Returns full response with tool_calls."""
-    url = settings.llm_url
-    key = settings.llm_api_key
-    mdl = settings.llm_model
+    """Non-streaming LLM call with tool support. Uses provider router for reliable tool calling."""
+    from core.providers import router as provider_router
 
-    payload = {
-        "model": mdl,
-        "messages": messages,
-        "max_tokens": 16384,
-        "tools": tools or AGENT_TOOLS,
-        "tool_choice": "auto",
-        "stream": False,
-    }
-    headers = {
-        "Authorization": f"Bearer {key}",
-        "Content-Type": "application/json",
-    }
-
-    async with httpx.AsyncClient(timeout=httpx.Timeout(300.0)) as client:
-        resp = await client.post(url, json=payload, headers=headers)
-        resp.raise_for_status()
-        data = resp.json()
-        return data["choices"][0]
+    try:
+        client, resp = await provider_router.call(
+            messages, intent="agent", stream=False,
+            tools=tools or AGENT_TOOLS,
+        )
+        try:
+            resp.raise_for_status()
+            data = resp.json()
+            return data["choices"][0]
+        finally:
+            await client.aclose()
+    except Exception as e:
+        logger.error(f"Tool-calling LLM failed via provider router: {e}")
+        raise
 
 
 # ─── Smart Tool Routing ───
@@ -729,7 +776,7 @@ _TOOL_GROUPS = {
     "core": {
         "search", "browse", "extract", "click", "type_text", "screenshot",
         "scroll", "wait_for", "tab_list", "tab_new", "delegate", "download",
-        "download_save", "download_list",
+        "download_save", "download_list", "list_models",
     },
     "media": {
         "youtube_play", "video_play",
@@ -914,6 +961,8 @@ def build_system_prompt(tools: list[dict]) -> str:
         utility_tools.append("- **download_save(url, filename, subdir)** — Download and save file to disk")
     if "download_list" in available:
         utility_tools.append("- **download_list(subdir)** — List saved files in download directory")
+    if "list_models" in available:
+        utility_tools.append("- **list_models()** — List all available LLM models across providers")
 
     if utility_tools:
         sections.append("### Utility\n" + "\n".join(utility_tools))

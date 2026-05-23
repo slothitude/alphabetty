@@ -85,6 +85,7 @@ async def plan_step(query: str) -> str:
 - workflow_run(workflow_id, data) — trigger workflow execution
 - workflow_status(workflow_id, limit) — check execution history
 - workflow_delete(workflow_id) — delete a workflow
+- list_models() — list all available LLM models across providers
 
 Given a user query, briefly state which tools to use and in what order. 1-2 sentences max."""},
         {"role": "user", "content": f"Plan approach for: {query}"},
@@ -373,6 +374,11 @@ async def execute_tool(name: str, args: dict, session: AgentSession | None = Non
                 result = r.json()
             return {"tool": "download_list", **result}
 
+        elif name == "list_models":
+            from core.providers import router as provider_router
+            models = provider_router.list_models()
+            return {"tool": "list_models", "models": models, "total": len(models)}
+
         else:
             return {"error": f"Unknown tool: {name}"}
 
@@ -572,6 +578,20 @@ def format_tool_result_for_llm(tool_result: dict) -> str:
         lines = [f"Saved files ({len(files)}):"]
         for f in files:
             lines.append(f"  - {f['name']} ({f['size_bytes']:,} bytes)")
+        return "\n".join(lines)
+
+    elif tool == "list_models":
+        models = tool_result.get("models", [])
+        if not models:
+            return "No models available"
+        grouped = {}
+        for m in models:
+            grouped.setdefault(m["provider"], []).append(m["id"])
+        lines = [f"Available models ({len(models)} total):"]
+        for provider, ids in grouped.items():
+            lines.append(f"  [{provider}] {', '.join(ids[:10])}")
+            if len(ids) > 10:
+                lines.append(f"    ... and {len(ids) - 10} more")
         return "\n".join(lines)
 
     return json.dumps(tool_result)

@@ -39,6 +39,12 @@ class Settings(BaseSettings):
     # Agent bridge — comma-separated "name=url" pairs for outbound agent calling
     agent_endpoints: str = ""
 
+    # Multi-model providers
+    openrouter_api_key: str = ""
+    openrouter_base_url: str = "https://openrouter.ai/api/v1"
+    nvidia_api_key: str = ""
+    nvidia_base_url: str = "https://integrate.api.nvidia.com/v1"
+
     # n8n workflow automation
     n8n_url: str = "http://localhost:5678"
     n8n_api_key: str = ""
