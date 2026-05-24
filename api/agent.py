@@ -222,14 +222,32 @@ async def execute_tool(name: str, args: dict, session: AgentSession | None = Non
             return {"tool": "youtube_play", "query": query_str, "video_url": video_url, "video_id": video_id}
 
         elif name == "video_play":
-            import httpx as _httpx
+            from urllib.parse import urlparse, parse_qs
 
-            async with _httpx.AsyncClient(timeout=60) as client:
-                resp = await client.post(
-                    "http://localhost:7700/api/cdp/video/play",
-                    json={"url": args["url"]},
-                )
-                result = resp.json()
+            url = args["url"]
+            parsed = urlparse(url)
+            result = {}
+
+            # YouTube quick path
+            if "youtube.com" in (parsed.hostname or "") and "v" in parse_qs(parsed.query):
+                result = {"type": "youtube", "video_id": parse_qs(parsed.query)["v"][0], "url": url}
+            elif "youtu.be" in (parsed.hostname or ""):
+                result = {"type": "youtube", "video_id": parsed.path.strip("/"), "url": url}
+            # Direct stream URLs (Jellyfin, MP4, WebM, M3U8)
+            elif any((parsed.path or "").lower().endswith(ext) for ext in (".mp4", ".webm", ".m3u8", ".mkv", "/stream")) or \
+                 "8096/videos/" in (url or "").lower():
+                result = {"type": "direct", "stream_url": url, "title": "", "url": url}
+            else:
+                # Fall back to yt-dlp
+                try:
+                    import yt_dlp
+                    ydl_opts = {"quiet": True, "no_warnings": True, "format": "best[ext=mp4]/best"}
+                    with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+                        info = ydl.extract_info(url, download=False)
+                    stream_url = info.get("url") or info.get("manifest_url", "")
+                    result = {"type": "direct", "stream_url": stream_url, "title": info.get("title", ""), "url": url}
+                except Exception as e:
+                    result = {"type": "navigate", "url": url, "error": str(e)}
 
             # Emit event for frontend
             from core.events import emit
