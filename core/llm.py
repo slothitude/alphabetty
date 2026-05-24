@@ -821,6 +821,7 @@ _INTENT_KEYWORDS = {
         "x video", "twitter video", "embed", "jellyfin", "film", "show", "episode",
         "series", "season", "tv show", "tv series", "torrent", "download", "radarr",
         "sonarr", "qbittorrent", "request", "tmdb", "vpn",
+        "media", "library", "catalog", "collection",
     ],
     "macro": [
         "macro", "record", "replay", "automate", "repeat",
@@ -974,7 +975,8 @@ def build_system_prompt(tools: list[dict]) -> str:
     if "media_control" in available:
         media_tools.append("- **media_control(action, query, hash, service)** — Swiss army knife: search, downloads, status, etc.")
     if any(t in available for t in ("media_search", "media_control")):
-        media_tools.append("- **IMPORTANT: Use `play_remote` (Tailscale) URLs for playback, NOT `play_lan`. Use `video_play(url)` to play — it opens the native player with controls.**")
+        media_tools.append("- **IMPORTANT: Do NOT browse Jellyfin/Radarr/Sonarr URLs directly. Always use `media_search`, `search_tmdb`, `media_request` etc. tools instead.**")
+        media_tools.append("- **Use `play_remote` (Tailscale) URLs for playback, NOT `play_lan`. Use `video_play(url)` to play — it opens the native player with controls.**")
 
     if media_tools:
         sections.append("### Media\n" + "\n".join(media_tools))
