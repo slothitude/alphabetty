@@ -975,7 +975,8 @@ def build_system_prompt(tools: list[dict]) -> str:
     if "media_control" in available:
         media_tools.append("- **media_control(action, query, hash, service)** — Swiss army knife: search, downloads, status, etc.")
     if any(t in available for t in ("media_search", "media_control")):
-        media_tools.append("- **IMPORTANT: Do NOT browse Jellyfin/Radarr/Sonarr URLs directly. Always use `media_search`, `search_tmdb`, `media_request` etc. tools instead.**")
+        media_tools.append("- **PRIORITY: Always search local library FIRST with `media_search(query)` before trying YouTube or web. Only fall back to YouTube/web if nothing is found locally.**")
+        media_tools.append("- **Do NOT browse Jellyfin/Radarr/Sonarr URLs directly. Always use `media_search`, `search_tmdb`, `media_request` etc. tools instead.**")
         media_tools.append("- **Use `play_remote` (Tailscale) URLs for playback, NOT `play_lan`. Use `video_play(url)` to play — it opens the native player with controls.**")
 
     if media_tools:
