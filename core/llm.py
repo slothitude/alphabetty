@@ -973,6 +973,8 @@ def build_system_prompt(tools: list[dict]) -> str:
         media_tools.append("- **torrents_action(hash, action)** — Pause/resume/delete/bump a torrent")
     if "media_control" in available:
         media_tools.append("- **media_control(action, query, hash, service)** — Swiss army knife: search, downloads, status, etc.")
+    if any(t in available for t in ("media_search", "media_control")):
+        media_tools.append("- **IMPORTANT: Use `play_remote` (Tailscale) URLs for playback, NOT `play_lan`. Use `video_play(url)` to play — it opens the native player with controls.**")
 
     if media_tools:
         sections.append("### Media\n" + "\n".join(media_tools))

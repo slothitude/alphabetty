@@ -550,6 +550,12 @@ async def video_play(req: VideoPlayRequest, user: User = Depends(get_current_use
         video_id = parsed.path.strip("/")
         return {"type": "youtube", "video_id": video_id, "url": url}
 
+    # Quick path for direct stream URLs (Jellyfin, direct MP4/WebM/M3U8)
+    path_lower = (parsed.path or "").lower()
+    if any(path_lower.endswith(ext) for ext in (".mp4", ".webm", ".m3u8", ".mkv")) or \
+       "8096/videos/" in (url or "").lower():
+        return {"type": "direct", "stream_url": url, "title": "", "url": url}
+
     # Use yt-dlp to extract stream URL
     def _extract():
         import yt_dlp
