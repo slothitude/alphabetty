@@ -25,8 +25,6 @@ services:
       - ALPHABETTY_SWARM_CAPS=${ALPHABETTY_SWARM_CAPS:-}
       - ALPHABETTY_SWARM_PEERS=${ALPHABETTY_SWARM_PEERS:-}
       - ALPHABETTY_SWARM_KEY=${ALPHABETTY_SWARM_KEY:-}
-      - ALPHABETTY_JELLYFIN_USER=${ALPHABETTY_JELLYFIN_USER:-}
-      - ALPHABETTY_JELLYFIN_PASS=${ALPHABETTY_JELLYFIN_PASS:-}
     restart: unless-stopped
     extra_hosts:
       - "host.docker.internal:host-gateway"

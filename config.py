@@ -49,12 +49,6 @@ class Settings(BaseSettings):
     n8n_url: str = "http://localhost:5678"
     n8n_api_key: str = ""
 
-    # Jellyfin media
-    jellyfin_url: str = "http://192.168.0.33:8096"
-    jellyfin_tailscale_url: str = "http://100.84.161.63:8096"
-    jellyfin_user: str = ""
-    jellyfin_pass: str = ""
-
     # Swarm inter-instance routing
     swarm_name: str = ""        # This instance's identity (e.g. "oracle", "lappy")
     swarm_caps: str = ""        # Comma-separated capabilities (browser,gpu,llm_heavy,search,image_gen)

@@ -502,34 +502,6 @@ AGENT_TOOLS = [
             },
         },
     },
-    {
-        "type": "function",
-        "function": {
-            "name": "media_search",
-            "description": "Search the Jellyfin media library for movies, TV shows, and episodes. Returns results with poster images and direct-play stream URLs.",
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "query": {"type": "string", "description": "Search query (movie/show title, actor, etc.)"},
-                },
-                "required": ["query"],
-            },
-        },
-    },
-    {
-        "type": "function",
-        "function": {
-            "name": "media_play",
-            "description": "Play a movie or episode from the Jellyfin media library by item ID. Returns a direct stream URL that plays in the viewport.",
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "item_id": {"type": "string", "description": "Jellyfin item ID to play"},
-                },
-                "required": ["item_id"],
-            },
-        },
-    },
 ]
 
 AGENT_SYSTEM = """You are Alphabetty, an autonomous AI research agent with full web browsing and automation capabilities.
@@ -807,7 +779,7 @@ _TOOL_GROUPS = {
         "download_save", "download_list", "list_models",
     },
     "media": {
-        "youtube_play", "video_play", "media_search", "media_play",
+        "youtube_play", "video_play",
     },
     "macro": {
         "macro_record", "macro_stop", "macro_play",
@@ -828,8 +800,7 @@ _INTENT_KEYWORDS = {
     "media": [
         "play", "video", "watch", "youtube", "yt", "music", "song", "movie", "clip",
         "stream", "listen", "audio", "facebook video", "instagram video", "tiktok",
-        "x video", "twitter video", "embed", "jellyfin", "film", "show", "episode",
-        "series", "season", "tv show", "tv series",
+        "x video", "twitter video", "embed",
     ],
     "macro": [
         "macro", "record", "replay", "automate", "repeat",
@@ -964,10 +935,6 @@ def build_system_prompt(tools: list[dict]) -> str:
         media_tools.append("- **youtube_play(query)** — Search YouTube and play a video in Chrome")
     if "video_play" in available:
         media_tools.append("- **video_play(url)** — Play any video URL (YouTube, Facebook, X, TikTok, etc.)")
-    if "media_search" in available:
-        media_tools.append("- **media_search(query)** — Search Jellyfin media library (movies, shows, episodes)")
-    if "media_play" in available:
-        media_tools.append("- **media_play(item_id)** — Play a movie/episode from Jellyfin by item ID")
 
     if media_tools:
         sections.append("### Media\n" + "\n".join(media_tools))

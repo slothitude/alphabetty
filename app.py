@@ -159,7 +159,6 @@ from api.download import router as download_router
 from api.share import router as share_router
 from api.models import router as models_router
 from api.swarm import router as swarm_router
-from api.media import router as media_router
 
 
 app.include_router(auth_router, prefix="/api/v1")
@@ -182,7 +181,6 @@ app.include_router(download_router, prefix="/api/v1")
 app.include_router(share_router, prefix="/api/v1")
 app.include_router(models_router, prefix="/api/v1")
 app.include_router(swarm_router, prefix="/api/v1")
-app.include_router(media_router, prefix="/api/v1")
 
 # Backward compat: also mount all routers at /api (unversioned)
 app.include_router(auth_router, prefix="/api")
@@ -205,7 +203,6 @@ app.include_router(download_router, prefix="/api")
 app.include_router(share_router, prefix="/api")
 app.include_router(models_router, prefix="/api")
 app.include_router(swarm_router, prefix="/api")
-app.include_router(media_router, prefix="/api")
 
 
 # ── MCP SSE endpoint for LLM agents (GhostKV, Claude Code, etc.) ────
