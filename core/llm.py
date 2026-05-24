@@ -504,6 +504,20 @@ AGENT_TOOLS = [
     },
 ]
 
+# ── Append media stack tools (fetched from OpenAI-compatible API) ──
+try:
+    from core.media import get_tools_sync
+    _media_tool_defs = get_tools_sync()
+    if _media_tool_defs:
+        # Deduplicate by name
+        existing_names = {t.get("function", {}).get("name") for t in AGENT_TOOLS}
+        for mt in _media_tool_defs:
+            if mt.get("function", {}).get("name") not in existing_names:
+                AGENT_TOOLS.append(mt)
+        logger.info(f"Added {len(_media_tool_defs)} media stack tools to agent")
+except Exception as e:
+    logger.warning(f"Media stack tools unavailable: {e}")
+
 AGENT_SYSTEM = """You are Alphabetty, an autonomous AI research agent with full web browsing and automation capabilities.
 
 ## Available Tools
@@ -780,6 +794,10 @@ _TOOL_GROUPS = {
     },
     "media": {
         "youtube_play", "video_play",
+        "media_search", "search_tmdb", "media_request", "media_requests",
+        "radarr_movies", "radarr_queue", "sonarr_series", "sonarr_queue",
+        "torrents_list", "torrents_action", "stack_status", "vpn_status",
+        "media_control",
     },
     "macro": {
         "macro_record", "macro_stop", "macro_play",
@@ -800,7 +818,9 @@ _INTENT_KEYWORDS = {
     "media": [
         "play", "video", "watch", "youtube", "yt", "music", "song", "movie", "clip",
         "stream", "listen", "audio", "facebook video", "instagram video", "tiktok",
-        "x video", "twitter video", "embed",
+        "x video", "twitter video", "embed", "jellyfin", "film", "show", "episode",
+        "series", "season", "tv show", "tv series", "torrent", "download", "radarr",
+        "sonarr", "qbittorrent", "request", "tmdb", "vpn",
     ],
     "macro": [
         "macro", "record", "replay", "automate", "repeat",
@@ -935,6 +955,24 @@ def build_system_prompt(tools: list[dict]) -> str:
         media_tools.append("- **youtube_play(query)** — Search YouTube and play a video in Chrome")
     if "video_play" in available:
         media_tools.append("- **video_play(url)** — Play any video URL (YouTube, Facebook, X, TikTok, etc.)")
+    if "media_search" in available:
+        media_tools.append("- **media_search(query)** — Search Jellyfin library, returns direct-play stream links")
+    if "search_tmdb" in available:
+        media_tools.append("- **search_tmdb(query, media_type)** — Search TMDb for movies/TV to request")
+    if "media_request" in available:
+        media_tools.append("- **media_request(media_id, media_type)** — Request a movie/TV show via Jellyseerr")
+    if "media_requests" in available:
+        media_tools.append("- **media_requests(status)** — List Jellyseerr requests")
+    if "radarr_movies" in available:
+        media_tools.append("- **radarr_movies(status)** — List Radarr movies")
+    if "sonarr_series" in available:
+        media_tools.append("- **sonarr_series(status)** — List Sonarr series")
+    if "torrents_list" in available:
+        media_tools.append("- **torrents_list(filter_status)** — List qBittorrent torrents")
+    if "torrents_action" in available:
+        media_tools.append("- **torrents_action(hash, action)** — Pause/resume/delete/bump a torrent")
+    if "media_control" in available:
+        media_tools.append("- **media_control(action, query, hash, service)** — Swiss army knife: search, downloads, status, etc.")
 
     if media_tools:
         sections.append("### Media\n" + "\n".join(media_tools))

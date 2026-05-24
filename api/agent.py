@@ -390,6 +390,16 @@ async def execute_tool(name: str, args: dict, session: AgentSession | None = Non
             models = provider_router.list_models()
             return {"tool": "list_models", "models": models, "total": len(models)}
 
+        elif name in (
+            "media_search", "search_tmdb", "media_request", "media_requests",
+            "radarr_movies", "radarr_queue", "sonarr_series", "sonarr_queue",
+            "torrents_list", "torrents_action", "stack_status", "vpn_status",
+            "media_control",
+        ):
+            from core import media as _media
+            result = await _media.call_tool(name, args)
+            return {"tool": name, **result}
+
         else:
             return {"error": f"Unknown tool: {name}"}
 
