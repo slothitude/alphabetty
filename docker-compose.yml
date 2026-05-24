@@ -25,6 +25,7 @@ services:
       - ALPHABETTY_SWARM_CAPS=${ALPHABETTY_SWARM_CAPS:-}
       - ALPHABETTY_SWARM_PEERS=${ALPHABETTY_SWARM_PEERS:-}
       - ALPHABETTY_SWARM_KEY=${ALPHABETTY_SWARM_KEY:-}
+      - ALPHABETTY_MEDIA_STACK_URL=${ALPHABETTY_MEDIA_STACK_URL:-http://192.168.0.33:8070}
     restart: unless-stopped
     extra_hosts:
       - "host.docker.internal:host-gateway"

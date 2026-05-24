@@ -1,13 +1,14 @@
-"""Media stack proxy — calls the OpenAI-compatible media tool API on Rog."""
+"""Media stack proxy — calls the OpenAI-compatible media tool API."""
 
 import json
 import logging
+import os
 
 import httpx
 
 logger = logging.getLogger(__name__)
 
-MEDIA_STACK_URL = "http://192.168.0.33:8070"
+MEDIA_STACK_URL = os.environ.get("ALPHABETTY_MEDIA_STACK_URL", "http://192.168.0.33:8070")
 
 # Cached tool schemas (fetched once)
 _media_tools: list[dict] | None = None

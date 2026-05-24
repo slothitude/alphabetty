@@ -49,6 +49,9 @@ class Settings(BaseSettings):
     n8n_url: str = "http://localhost:5678"
     n8n_api_key: str = ""
 
+    # Media stack API (OpenAI-compatible tool endpoint)
+    media_stack_url: str = "http://192.168.0.33:8070"
+
     # Swarm inter-instance routing
     swarm_name: str = ""        # This instance's identity (e.g. "oracle", "lappy")
     swarm_caps: str = ""        # Comma-separated capabilities (browser,gpu,llm_heavy,search,image_gen)
