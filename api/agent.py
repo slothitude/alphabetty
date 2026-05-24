@@ -390,6 +390,22 @@ async def execute_tool(name: str, args: dict, session: AgentSession | None = Non
             models = provider_router.list_models()
             return {"tool": "list_models", "models": models, "total": len(models)}
 
+        elif name == "media_search":
+            from core import media as _media
+            results = await _media.jellyfin_search(args["query"])
+            return {"tool": "media_search", "results": results, "count": len(results)}
+
+        elif name == "media_play":
+            from core import media as _media
+            item_id = args["item_id"]
+            stream_url = _media.jellyfin_stream_url(item_id)
+            poster_url = _media.jellyfin_poster_url(item_id)
+            # Emit video.playing so frontend's playVideo() picks it up
+            from core.events import emit
+            play_data = {"type": "direct", "stream_url": stream_url, "title": args.get("title", ""), "poster_url": poster_url}
+            emit("video.playing", play_data)
+            return {"tool": "media_play", "item_id": item_id, **play_data}
+
         else:
             return {"error": f"Unknown tool: {name}"}
 

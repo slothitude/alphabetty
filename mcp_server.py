@@ -11,11 +11,18 @@ import json
 import logging
 import os
 import sys
+import urllib.parse
 from pathlib import Path
 from typing import Optional
 
 import httpx
 from fastmcp import FastMCP
+
+try:
+    import paramiko
+    _HAS_PARAMIKO = True
+except ImportError:
+    _HAS_PARAMIKO = False
 
 logging.basicConfig(level=logging.WARNING)
 logger = logging.getLogger("alphabetty-mcp")
@@ -1159,6 +1166,766 @@ async def _release_session():
             logger.info("Released session")
     except Exception as e:
         logger.warning(f"Session release failed: {e}")
+
+
+# ─── Media Stack (SSH to Lappy) ───
+
+# Configuration
+_MEDIA_SSH_HOST = "192.168.0.33"
+_MEDIA_SSH_USER = "aaron"
+_MEDIA_SSH_PASS = "T0b1@n7243"
+
+_MEDIA_SERVICES = {
+    "radarr": {"port": 7878, "key": "8e1f87572aff4f5f8d1b3ecf0d07de0f"},
+    "sonarr": {"port": 8989, "key": "0b7a42764d754cf98b88cd04c9ab24a8"},
+    "lidarr": {"port": 8686, "key": "61e90ca7a70c4e43bfee9ed9fe0831cd"},
+    "prowlarr": {"port": 9696, "key": "4e3133c43d2946ce8221b139daf81898"},
+}
+_MEDIA_QB_USER = "admin"
+_MEDIA_QB_PASS = "adminadmin"
+_MEDIA_JF_USER = "admin"
+_MEDIA_JF_PASS = "Tobiano01"
+_MEDIA_JELLYSEERR_KEY = "MTc3OTQ5NTU3NzY0NWVkMTQwZmVmLTZkOTEtNDY3Ni04YTMwLTVjNTUzMGRiZWZhOA=="
+_MEDIA_TAILSCALE_IP = "100.84.161.63"
+
+_media_ssh_client = None
+
+
+def _media_get_ssh() -> "paramiko.SSHClient":
+    if not _HAS_PARAMIKO:
+        raise RuntimeError("paramiko not installed — media tools unavailable in this environment")
+    global _media_ssh_client
+    if _media_ssh_client is None or _media_ssh_client.get_transport() is None or not _media_ssh_client.get_transport().is_active():
+        _media_ssh_client = paramiko.SSHClient()
+        _media_ssh_client.set_missing_host_key_policy(paramiko.AutoAddPolicy())
+        _media_ssh_client.connect(_MEDIA_SSH_HOST, username=_MEDIA_SSH_USER, password=_MEDIA_SSH_PASS, timeout=10)
+    return _media_ssh_client
+
+
+def _media_ssh_exec(cmd: str) -> str:
+    ssh = _media_get_ssh()
+    _, stdout, stderr = ssh.exec_command(cmd, timeout=30)
+    out = stdout.read().decode("utf-8", errors="replace")
+    err = stderr.read().decode("utf-8", errors="replace")
+    return out if out.strip() else err
+
+
+def _media_ssh_python(code: str) -> str:
+    write_cmd = (
+        'python -X utf8 -c "'
+        'import urllib.request,json,sys,http.cookiejar;'
+        + code.replace('"', '\\"')
+        + '"'
+    )
+    return _media_ssh_exec(write_cmd)
+
+
+def _media_http_get(url: str, headers: dict = None) -> dict:
+    h = headers or {}
+    script = (
+        f"req=urllib.request.Request('{url}',headers={h});"
+        f"resp=urllib.request.urlopen(req,timeout=15);"
+        f"sys.stdout.write(resp.read().decode())"
+    )
+    raw = _media_ssh_python(script)
+    if not raw.strip():
+        return {}
+    try:
+        return json.loads(raw)
+    except json.JSONDecodeError:
+        return {"error": f"non-JSON: {raw[:300]}"}
+
+
+def _media_http_post(url: str, data: dict = None, headers: dict = None, method: str = "POST") -> dict:
+    h = headers or {}
+    body = json.dumps(data).encode() if data else b""
+    h.setdefault("Content-Type", "application/json")
+    b64_body = base64.b64encode(body).decode() if body else ""
+    script = (
+        f"import base64;"
+        f"body=base64.b64decode('{b64_body}') if '{b64_body}' else None;"
+        f"req=urllib.request.Request('{url}',data=body,headers={h},method='{method}');"
+        f"resp=urllib.request.urlopen(req,timeout=15);"
+        f"sys.stdout.write(resp.read().decode())"
+    )
+    raw = _media_ssh_python(script)
+    if not raw.strip():
+        return {}
+    try:
+        return json.loads(raw)
+    except json.JSONDecodeError:
+        return {"error": f"non-JSON: {raw[:300]}"}
+
+
+def _media_arr_api(service: str, path: str, method: str = "GET", data: dict = None) -> dict:
+    port = _MEDIA_SERVICES[service]["port"]
+    key = _MEDIA_SERVICES[service]["key"]
+    url = f"http://localhost:{port}/api/v3{path}?apiKey={key}"
+    if method == "GET":
+        return _media_http_get(url)
+    return _media_http_post(url, data, method=method)
+
+
+# Jellyseerr
+def _media_js_api(path: str, method: str = "GET", data: dict = None) -> dict:
+    url = f"http://localhost:5055/api/v1{path}"
+    headers = {"X-Api-Key": _MEDIA_JELLYSEERR_KEY}
+    if method == "GET":
+        return _media_http_get(url, headers)
+    return _media_http_post(url, data, headers, method=method)
+
+
+# qBittorrent auth
+_media_qb_sid = None
+
+
+def _media_qb_login() -> str:
+    global _media_qb_sid
+    if _media_qb_sid:
+        return _media_qb_sid
+    form = f"username={_MEDIA_QB_USER}&password={_MEDIA_QB_PASS}".encode()
+    b64 = base64.b64encode(form).decode()
+    script = (
+        f"import base64,http.cookiejar,urllib.request;"
+        f"body=base64.b64decode('{b64}');"
+        f"cj=http.cookiejar.CookieJar();"
+        f"opener=urllib.request.build_opener(urllib.request.HTTPCookieProcessor(cj));"
+        f"req=urllib.request.Request('http://localhost:8090/api/v2/auth/login',"
+        f"data=body,headers={{'Content-Type':'application/x-www-form-urlencoded'}});"
+        f"resp=opener.open(req,timeout=15);"
+        f"cookies=[c for c in cj if 'SID' in c.name];"
+        f"sys.stdout.write(cookies[0].name+'='+cookies[0].value if cookies else 'NO_SID')"
+    )
+    result = _media_ssh_python(script).strip()
+    if result and result != "NO_SID":
+        _media_qb_sid = result
+    return _media_qb_sid or ""
+
+
+def _media_qb_api(path: str, method: str = "GET", data: dict = None) -> dict:
+    sid = _media_qb_login()
+    url = f"http://localhost:8090/api/v2{path}"
+    if method == "GET":
+        return _media_http_get(url, headers={"Cookie": sid})
+    form = urllib.parse.urlencode(data or {}).encode()
+    b64 = base64.b64encode(form).decode()
+    script = (
+        f"import base64,urllib.request;"
+        f"body=base64.b64decode('{b64}');"
+        f"req=urllib.request.Request('{url}',data=body,"
+        f"headers={{'Content-Type':'application/x-www-form-urlencoded','Cookie':'{sid}'}});"
+        f"resp=urllib.request.urlopen(req,timeout=15);"
+        f"sys.stdout.write(resp.read().decode())"
+    )
+    raw = _media_ssh_python(script)
+    if not raw.strip():
+        return {"status": "ok"}
+    try:
+        return json.loads(raw)
+    except json.JSONDecodeError:
+        return {"raw": raw[:500]}
+
+
+# Jellyfin auth
+_media_jf_token = None
+_media_jf_user = None
+
+_JF_LAN = f"http://{_MEDIA_SSH_HOST}:8096"
+_JF_TS = f"http://{_MEDIA_TAILSCALE_IP}:8096"
+
+
+def _media_jf_auth() -> tuple:
+    global _media_jf_token, _media_jf_user
+    body = json.dumps({"Username": _MEDIA_JF_USER, "Pw": _MEDIA_JF_PASS}).encode()
+    b64 = base64.b64encode(body).decode()
+    script = (
+        "import base64,json,urllib.request;"
+        f"body=base64.b64decode('{b64}');"
+        "req=urllib.request.Request('http://localhost:8096/Users/AuthenticateByName',"
+        "data=body,headers={'Content-Type':'application/json',"
+        "'X-Emby-Authorization':'MediaBrowser Client=mcptool, Device=cli, DeviceId=mcptool, Version=1.0'});"
+        "resp=urllib.request.urlopen(req,timeout=15);"
+        "sys.stdout.write(resp.read().decode())"
+    )
+    raw = _media_ssh_python(script)
+    auth = json.loads(raw)
+    return auth["AccessToken"], auth["User"]["Id"]
+
+
+def _media_jf_search(query: str, item_types: str = "Movie,Series") -> list:
+    global _media_jf_token, _media_jf_user
+    if not _media_jf_token:
+        _media_jf_token, _media_jf_user = _media_jf_auth()
+    q = urllib.parse.quote(query)
+    url = (
+        f"http://localhost:8096/Items?SearchTerm={q}"
+        f"&Recursive=true&IncludeItemTypes={item_types}"
+        f"&Limit=10&api_key={_media_jf_token}"
+    )
+    result = _media_http_get(url)
+    return result.get("Items", [])
+
+
+def _media_stream_urls(item_id: str) -> dict:
+    params = f"/Videos/{item_id}/stream.mp4?mediaSourceId={item_id}&api_key={_media_jf_token}&AudioCodec=aac&AudioBitRate=128000"
+    return {"lan": f"{_JF_LAN}{params}", "tailscale": f"{_JF_TS}{params}"}
+
+
+# ── Media Stack MCP Tools ──
+
+@mcp.tool()
+async def media_search(query: str) -> str:
+    """Search Jellyfin library for movies/TV shows. Returns direct-play stream links (no login required).
+    URLs provided for both LAN and Tailscale (remote access).
+    For series, returns individual episodes with play links.
+
+    Args:
+        query: Search term (e.g. "The Matrix")
+    """
+    try:
+        items = _media_jf_search(query)
+        if not items:
+            return json.dumps({"message": f"No results in Jellyfin for '{query}'. Use media_request to add it."})
+        results = []
+        for item in items[:5]:
+            item_id = item["Id"]
+            item_type = item.get("Type", "")
+            if item_type == "Series":
+                eps_url = (
+                    f"http://localhost:8096/Shows/{item_id}/Episodes?"
+                    f"UserId={_media_jf_user}&Fields=MediaSources&api_key={_media_jf_token}"
+                )
+                eps_data = _media_http_get(eps_url)
+                episodes = eps_data.get("Items", [])
+                for ep in episodes[:10]:
+                    ep_id = ep["Id"]
+                    urls = _media_stream_urls(ep_id)
+                    snum = ep.get("ParentIndexNumber", "?")
+                    enum = ep.get("IndexNumber", "?")
+                    results.append({
+                        "title": f"{item.get('Name')} S{snum:02d}E{enum:02d} - {ep.get('Name', '')}",
+                        "year": item.get("ProductionYear"),
+                        "type": "Episode",
+                        "play_lan": urls["lan"],
+                        "play_remote": urls["tailscale"],
+                        "details": f"{_JF_TS}/web/#/details?id={ep_id}",
+                    })
+            else:
+                urls = _media_stream_urls(item_id)
+                results.append({
+                    "title": item.get("Name"),
+                    "year": item.get("ProductionYear"),
+                    "type": item_type,
+                    "play_lan": urls["lan"],
+                    "play_remote": urls["tailscale"],
+                    "details": f"{_JF_TS}/web/#/details?id={item_id}",
+                })
+        return json.dumps(results, indent=2)
+    except Exception as e:
+        return json.dumps({"error": str(e)})
+
+
+@mcp.tool()
+async def search_tmdb(query: str, media_type: str = "movie") -> str:
+    """Search TMDb via Jellyseerr for movies or TV shows to request.
+    Returns TMDb IDs, titles, years, and overviews. Use media_request with the ID to download.
+
+    Args:
+        query: Search term (e.g. "The Matrix")
+        media_type: "movie" or "tv"
+    """
+    try:
+        q = urllib.parse.quote(query)
+        result = _media_js_api(f"/search?query={q}")
+        if isinstance(result, dict) and "error" in result:
+            return json.dumps(result)
+        items = result.get("results", []) if isinstance(result, dict) else result
+        filtered = [r for r in items if r.get("mediaType") == media_type][:10]
+        if not filtered:
+            return json.dumps({"message": f"No {media_type} results for '{query}'"})
+        out = []
+        for r in filtered:
+            poster = r.get("posterPath")
+            mt = r.get("mediaType", "movie")
+            poster_urls = {}
+            if poster:
+                poster_urls = {
+                    "poster_lan": f"http://{_MEDIA_SSH_HOST}:5055/image/{mt}?path={poster}",
+                    "poster_tailscale": f"http://{_MEDIA_TAILSCALE_IP}:5055/image/{mt}?path={poster}",
+                }
+            out.append({
+                "tmdb_id": r.get("id"),
+                "title": r.get("title") or r.get("name"),
+                "year": (r.get("releaseDate") or r.get("firstAirDate") or "")[:4],
+                "overview": (r.get("overview") or "")[:150],
+                **poster_urls,
+            })
+        return json.dumps(out, indent=2)
+    except Exception as e:
+        return json.dumps({"error": str(e)})
+
+
+@mcp.tool()
+async def media_request(media_id: int, media_type: str = "movie") -> str:
+    """Request a movie or TV show via Jellyseerr.
+
+    Args:
+        media_id: TMDb ID from search_tmdb results
+        media_type: "movie" or "tv"
+    """
+    try:
+        body = {"mediaType": media_type, "mediaId": media_id}
+        if media_type == "tv":
+            body["seasons"] = "all"
+        result = _media_js_api("/request", method="POST", data=body)
+        return json.dumps(result, indent=2)
+    except Exception as e:
+        return json.dumps({"error": str(e)})
+
+
+@mcp.tool()
+async def media_requests(status: Optional[str] = None) -> str:
+    """List Jellyseerr requests.
+
+    Args:
+        status: Filter - "pending", "approved", "available", "all", or None for default
+    """
+    try:
+        path = "/request"
+        if status and status != "all":
+            status_map = {"pending": 1, "approved": 2, "available": 3}
+            path += f"?filter={status_map.get(status, status)}"
+        result = _media_js_api(path)
+        if isinstance(result, dict) and "error" in result:
+            return json.dumps(result)
+        items = result if isinstance(result, list) else result.get("results", [])
+        out = []
+        for r in (items[:20] if isinstance(items, list) else []):
+            media = r.get("media", {})
+            out.append({
+                "id": r.get("id"),
+                "type": r.get("type"),
+                "title": media.get("title") or media.get("externalServiceSlug", ""),
+                "status": r.get("status"),
+                "created": r.get("createdAt", "")[:10],
+            })
+        return json.dumps(out, indent=2)
+    except Exception as e:
+        return json.dumps({"error": str(e)})
+
+
+@mcp.tool()
+async def radarr_movies(status: Optional[str] = None) -> str:
+    """List movies in Radarr library.
+
+    Args:
+        status: Optional filter - "downloaded", "missing", "monitored"
+    """
+    try:
+        result = _media_arr_api("radarr", "/movie")
+        if isinstance(result, dict) and "error" in result:
+            return json.dumps(result)
+        movies = result if isinstance(result, list) else []
+        if status == "downloaded":
+            movies = [m for m in movies if m.get("hasFile")]
+        elif status == "missing":
+            movies = [m for m in movies if not m.get("hasFile") and m.get("monitored")]
+        elif status == "monitored":
+            movies = [m for m in movies if m.get("monitored")]
+        out = []
+        for m in movies[:50]:
+            out.append({
+                "title": m.get("title"),
+                "year": m.get("year"),
+                "status": m.get("status"),
+                "monitored": m.get("monitored"),
+                "hasFile": m.get("hasFile"),
+                "size_gb": round(m.get("sizeOnDisk", 0) / 1e9, 1) if m.get("sizeOnDisk") else 0,
+            })
+        return json.dumps(out, indent=2)
+    except Exception as e:
+        return json.dumps({"error": str(e)})
+
+
+@mcp.tool()
+async def radarr_queue() -> str:
+    """Check Radarr download queue."""
+    try:
+        result = _media_arr_api("radarr", "/queue")
+        if isinstance(result, dict) and "error" in result:
+            return json.dumps(result)
+        records = result.get("records", [])
+        out = []
+        for r in records[:20]:
+            out.append({
+                "title": r.get("title"),
+                "status": r.get("status"),
+                "progress": round((1 - r.get("sizeleft", 0) / max(r.get("size", 1), 1)) * 100, 1) if r.get("size") else 0,
+                "timeleft": r.get("timeleft"),
+                "downloadClient": r.get("downloadClient"),
+            })
+        return json.dumps(out, indent=2)
+    except Exception as e:
+        return json.dumps({"error": str(e)})
+
+
+@mcp.tool()
+async def sonarr_series(status: Optional[str] = None) -> str:
+    """List series in Sonarr library.
+
+    Args:
+        status: Optional filter - "downloaded", "missing", "continuing", "ended"
+    """
+    try:
+        result = _media_arr_api("sonarr", "/series")
+        if isinstance(result, dict) and "error" in result:
+            return json.dumps(result)
+        series = result if isinstance(result, list) else []
+        if status == "downloaded":
+            series = [s for s in series if s.get("statistics", {}).get("episodeFileCount", 0) > 0]
+        elif status == "missing":
+            series = [s for s in series if s.get("monitored") and (lambda st: st.get("episodeCount", 0) > st.get("episodeFileCount", 0))(s.get("statistics", {}))]
+        elif status in ("continuing", "ended"):
+            series = [s for s in series if s.get("status") == status.capitalize()]
+        out = []
+        for s in series[:50]:
+            stats = s.get("statistics", {})
+            out.append({
+                "title": s.get("title"),
+                "status": s.get("status"),
+                "monitored": s.get("monitored"),
+                "seasons": stats.get("seasonCount", 0),
+                "episodes": stats.get("episodeCount", 0),
+                "downloaded": stats.get("episodeFileCount", 0),
+                "size_gb": round(stats.get("sizeOnDisk", 0) / 1e9, 1) if stats.get("sizeOnDisk") else 0,
+            })
+        return json.dumps(out, indent=2)
+    except Exception as e:
+        return json.dumps({"error": str(e)})
+
+
+@mcp.tool()
+async def sonarr_queue() -> str:
+    """Check Sonarr download queue."""
+    try:
+        result = _media_arr_api("sonarr", "/queue")
+        if isinstance(result, dict) and "error" in result:
+            return json.dumps(result)
+        records = result.get("records", [])
+        out = []
+        for r in records[:20]:
+            out.append({
+                "title": r.get("title"),
+                "status": r.get("status"),
+                "progress": round((1 - r.get("sizeleft", 0) / max(r.get("size", 1), 1)) * 100, 1) if r.get("size") else 0,
+                "timeleft": r.get("timeleft"),
+                "downloadClient": r.get("downloadClient"),
+            })
+        return json.dumps(out, indent=2)
+    except Exception as e:
+        return json.dumps({"error": str(e)})
+
+
+@mcp.tool()
+async def torrents_list(filter_status: Optional[str] = None) -> str:
+    """List torrents from qBittorrent with status/progress/speed.
+
+    Args:
+        filter_status: Optional - "all", "downloading", "completed", "paused", "active", "error"
+    """
+    try:
+        path = "/torrents/info"
+        if filter_status:
+            path += f"?filter={filter_status}"
+        result = _media_qb_api(path)
+        torrents = result if isinstance(result, list) else []
+        out = []
+        for t in torrents[:100]:
+            out.append({
+                "name": t.get("name"),
+                "state": t.get("state"),
+                "progress": round(t.get("progress", 0) * 100, 1),
+                "size_gb": round(t.get("size", 0) / 1e9, 2),
+                "dlspeed_mbps": round(t.get("dlspeed", 0) / 1e6, 1),
+                "upspeed_mbps": round(t.get("upspeed", 0) / 1e6, 1),
+                "eta": t.get("eta"),
+                "hash": t.get("hash"),
+                "save_path": t.get("save_path"),
+                "category": t.get("category"),
+            })
+        return json.dumps(out[:100], indent=2)
+    except Exception as e:
+        return json.dumps({"error": str(e)})
+
+
+@mcp.tool()
+async def torrents_action(hash: str, action: str = "pause") -> str:
+    """Perform an action on a torrent in qBittorrent.
+
+    Args:
+        hash: Torrent hash
+        action: "pause", "resume", "delete", "delete_files", or "bump" (move to top of queue)
+    """
+    try:
+        if action == "pause":
+            result = _media_qb_api("/torrents/pause", method="POST", data={"hashes": hash})
+        elif action == "resume":
+            result = _media_qb_api("/torrents/resume", method="POST", data={"hashes": hash})
+        elif action == "delete":
+            result = _media_qb_api("/torrents/delete", method="POST", data={"hashes": hash, "deleteFiles": "false"})
+        elif action == "delete_files":
+            result = _media_qb_api("/torrents/delete", method="POST", data={"hashes": hash, "deleteFiles": "true"})
+        elif action == "bump":
+            result = _media_qb_api("/torrents/topPrio", method="POST", data={"hashes": hash})
+        else:
+            return json.dumps({"error": f"unknown action: {action}"})
+        return json.dumps(result, indent=2)
+    except Exception as e:
+        return json.dumps({"error": str(e)})
+
+
+@mcp.tool()
+async def stack_status() -> str:
+    """Docker ps for all media stack containers (health, uptime)."""
+    try:
+        raw = _media_ssh_exec(
+            "docker ps -a --filter \"label=com.docker.compose.project=media-stack\" "
+            "--format \"{{.Names}}\t{{.Status}}\t{{.Ports}}\""
+        )
+        containers = []
+        for line in raw.strip().splitlines():
+            if not line.strip():
+                continue
+            parts = line.split("\t")
+            containers.append({
+                "name": parts[0].strip() if len(parts) > 0 else "",
+                "status": parts[1].strip() if len(parts) > 1 else "",
+                "ports": parts[2].strip() if len(parts) > 2 else "",
+            })
+        if not containers:
+            raw = _media_ssh_exec("docker ps -a --format \"{{.Names}}\t{{.Status}}\t{{.Ports}}\"")
+            media_names = ["gluetun", "qbittorrent", "radarr", "sonarr", "lidarr",
+                           "prowlarr", "jellyfin", "jellyseerr", "bazarr", "autobrr",
+                           "searxng", "chrome", "qdrant", "rabbit", "guide"]
+            for line in raw.strip().splitlines():
+                if not line.strip():
+                    continue
+                parts = line.split("\t")
+                name = parts[0].strip() if len(parts) > 0 else ""
+                if any(n in name.lower() for n in media_names):
+                    containers.append({
+                        "name": name,
+                        "status": parts[1].strip() if len(parts) > 1 else "",
+                        "ports": parts[2].strip() if len(parts) > 2 else "",
+                    })
+        return json.dumps(containers, indent=2)
+    except Exception as e:
+        return json.dumps({"error": str(e)})
+
+
+@mcp.tool()
+async def vpn_status() -> str:
+    """Check Gluetun VPN connection (IP, location)."""
+    try:
+        raw = _media_ssh_exec("docker logs gluetun --tail 30")
+        lines = []
+        for line in raw.splitlines():
+            line = line.strip()
+            if any(kw in line.lower() for kw in ["ip ", "location", "country", "city", "vpn", "connected", "public"]):
+                lines.append(line)
+        ip_info = _media_ssh_exec("docker exec gluetun wget -qO- http://localhost:8000/v1/openvpn/status")
+        return json.dumps({
+            "log_lines": lines[-10:],
+            "status_api": ip_info.strip() if ip_info.strip() else "not available",
+        }, indent=2)
+    except Exception as e:
+        return json.dumps({"error": str(e)})
+
+
+@mcp.tool()
+async def media_control(action: str, query: Optional[str] = None, hash: Optional[str] = None, service: Optional[str] = None) -> str:
+    """One-stop media stack control. Search, browse, manage downloads, check status.
+
+    Args:
+        action: What to do:
+            - "search": Search Jellyfin for a movie/show. Returns direct-play links (no login).
+            - "downloads": List active torrents with progress/speed.
+            - "movies": List Radarr movies. Use query to filter by title.
+            - "shows": List Sonarr series. Use query to filter by title.
+            - "requests": List Jellyseerr pending requests.
+            - "status": Show all containers + VPN + disk space.
+            - "pause": Pause a torrent (requires hash).
+            - "resume": Resume a torrent (requires hash).
+            - "bump": Move a torrent to top of download queue (requires hash).
+            - "restart": Restart a Docker container (requires service name, e.g. "radarr", "gluetun").
+        query: Search/filter term for search, movies, shows actions.
+        hash: Torrent hash for pause/resume actions.
+        service: Container name for restart action.
+    """
+    try:
+        if action == "search":
+            if not query:
+                return json.dumps({"error": "query is required for search"})
+            items = _media_jf_search(query)
+            if not items:
+                return json.dumps({"message": f"Nothing in Jellyfin for '{query}'. Try media_request to add it."})
+            results = []
+            for item in items[:10]:
+                item_id = item["Id"]
+                urls = _media_stream_urls(item_id)
+                results.append({
+                    "title": item.get("Name"),
+                    "year": item.get("ProductionYear"),
+                    "type": item.get("Type"),
+                    "play_lan": urls["lan"],
+                    "play_remote": urls["tailscale"],
+                    "details": f"{_JF_TS}/web/#/details?id={item_id}",
+                })
+            return json.dumps(results, indent=2)
+
+        elif action == "downloads":
+            result = _media_qb_api("/torrents/info")
+            torrents = result if isinstance(result, list) else []
+            out = []
+            for t in torrents[:20]:
+                state = t.get("state", "?")
+                prog = round(t.get("progress", 0) * 100, 1)
+                dl = round(t.get("dlspeed", 0) / 1048576, 1)
+                up = round(t.get("upspeed", 0) / 1048576, 1)
+                size = round(t.get("size", 0) / 1073741824, 2)
+                eta_s = t.get("eta", 0)
+                if eta_s and eta_s < 8640000:
+                    m, s = divmod(eta_s, 60)
+                    h, m = divmod(m, 60)
+                    eta_str = f"{h}h{m}m" if h else f"{m}m{s}s"
+                else:
+                    eta_str = "-"
+                out.append({
+                    "name": t.get("name"),
+                    "state": state,
+                    "progress": f"{prog}%",
+                    "size_gb": size,
+                    "dl_mbps": dl,
+                    "up_mbps": up,
+                    "eta": eta_str,
+                    "hash": t.get("hash"),
+                })
+            return json.dumps(out, indent=2)
+
+        elif action == "movies":
+            result = _media_arr_api("radarr", "/movie")
+            movies = result if isinstance(result, list) else []
+            if query:
+                q = query.lower()
+                movies = [m for m in movies if q in m.get("title", "").lower()]
+            out = []
+            for m in movies[:30]:
+                status_icon = "+" if m.get("hasFile") else "-" if m.get("monitored") else "x"
+                out.append({
+                    "title": f"[{status_icon}] {m.get('title')} ({m.get('year','?')})",
+                    "has_file": m.get("hasFile"),
+                    "monitored": m.get("monitored"),
+                    "status": m.get("status"),
+                })
+            return json.dumps(out, indent=2)
+
+        elif action == "shows":
+            result = _media_arr_api("sonarr", "/series")
+            series = result if isinstance(result, list) else []
+            if query:
+                q = query.lower()
+                series = [s for s in series if q in s.get("title", "").lower()]
+            out = []
+            for s in series[:30]:
+                stats = s.get("statistics", {})
+                ep = stats.get("episodeCount", 0)
+                got = stats.get("episodeFileCount", 0)
+                out.append({
+                    "title": s.get("title"),
+                    "status": s.get("status"),
+                    "episodes": f"{got}/{ep}",
+                    "monitored": s.get("monitored"),
+                })
+            return json.dumps(out, indent=2)
+
+        elif action == "requests":
+            result = _media_js_api("/request?filter=1")
+            items = result.get("results", []) if isinstance(result, dict) else (result if isinstance(result, list) else [])
+            out = []
+            for r in items[:20]:
+                media = r.get("media", {})
+                out.append({
+                    "title": media.get("title") or media.get("externalServiceSlug", "?"),
+                    "type": r.get("type"),
+                    "status": r.get("status"),
+                    "requested_by": r.get("requestedBy", {}).get("displayName", "?"),
+                })
+            return json.dumps(out, indent=2)
+
+        elif action == "status":
+            raw = _media_ssh_exec(
+                "docker ps -a --filter \"label=com.docker.compose.project=media-stack\" "
+                "--format \"{{.Names}}\t{{.Status}}\""
+            )
+            containers = []
+            for line in raw.strip().splitlines():
+                parts = line.split("\t")
+                if len(parts) >= 2:
+                    containers.append({"name": parts[0], "status": parts[1]})
+            vpn_ip = ""
+            try:
+                ip_raw = _media_ssh_exec("docker exec gluetun wget -qO- --timeout=5 https://ipinfo.io/json 2>/dev/null")
+                ip_data = json.loads(ip_raw)
+                vpn_ip = f"{ip_data.get('ip','?')} ({ip_data.get('city','?')}, {ip_data.get('country','?')})"
+            except:
+                vpn_ip = "unknown"
+            disk = _media_ssh_exec("powershell -c \"(Get-PSDrive D).Free / 1GB\"").strip()
+            disk_gb = round(float(disk), 0) if disk else "?"
+            disk_total = _media_ssh_exec("powershell -c \"(Get-PSDrive D).Used / 1GB + (Get-PSDrive D).Free / 1GB\"").strip()
+            disk_total_gb = round(float(disk_total), 0) if disk_total else "?"
+            qresult = _media_qb_api("/torrents/info")
+            torrents = qresult if isinstance(qresult, list) else []
+            downloading = [t for t in torrents if "download" in t.get("state", "").lower()]
+            seeding = [t for t in torrents if "upload" in t.get("state", "").lower()]
+            return json.dumps({
+                "containers": len(containers),
+                "container_list": [f"{c['name']}: {c['status']}" for c in containers],
+                "vpn": vpn_ip,
+                "disk_free_gb": disk_gb,
+                "disk_total_gb": disk_total_gb,
+                "torrents_downloading": len(downloading),
+                "torrents_seeding": len(seeding),
+            }, indent=2)
+
+        elif action == "pause":
+            if not hash:
+                return json.dumps({"error": "hash is required for pause"})
+            _media_qb_api("/torrents/pause", method="POST", data={"hashes": hash})
+            return json.dumps({"status": "paused", "hash": hash})
+
+        elif action == "resume":
+            if not hash:
+                return json.dumps({"error": "hash is required for resume"})
+            _media_qb_api("/torrents/resume", method="POST", data={"hashes": hash})
+            return json.dumps({"status": "resumed", "hash": hash})
+
+        elif action == "bump":
+            if not hash:
+                return json.dumps({"error": "hash is required for bump"})
+            _media_qb_api("/torrents/topPrio", method="POST", data={"hashes": hash})
+            return json.dumps({"status": "bumped to top", "hash": hash})
+
+        elif action == "restart":
+            if not service:
+                return json.dumps({"error": "service name required (e.g. radarr, gluetun, jellyfin)"})
+            result = _media_ssh_exec(f"docker restart {service}")
+            return json.dumps({"status": "restarted", "service": service, "output": result.strip()})
+
+        else:
+            return json.dumps({"error": f"unknown action '{action}'. Use: search, downloads, movies, shows, requests, status, pause, resume, bump, restart"})
+
+    except Exception as e:
+        return json.dumps({"error": str(e)})
 
 
 # ─── Startup ───
