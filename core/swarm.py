@@ -51,10 +51,12 @@ TOOL_CAPABILITY_MAP: dict[str, str] = {
     "type_iframe": "browser",
     # Image gen → image_gen cap
     "generate_image": "image_gen",
+    # Doctor → doctor cap (self-healing SSH)
+    "call_doctor": "doctor",
 }
 
-# Tools that should never be routed remotely
-LOCAL_ONLY_TOOLS = {"search", "list_models", "download", "download_save", "download_list"}
+# Tools that should always execute locally (instance-specific config or state)
+LOCAL_ONLY_TOOLS = {"search"}
 
 
 # ─── Data classes ───
