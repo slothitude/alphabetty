@@ -63,10 +63,14 @@ async def run_health_checks():
                 if now - svc.last_doctor_call >= _COOLDOWN:
                     logger.info(f"[doctor] Auto-calling doctor for {name}")
                     svc.last_doctor_call = now
-                    # Fire and forget — don't block health loop
-                    asyncio.create_task(
+                    # Fire and forget with error logging
+                    task = asyncio.create_task(
                         call_doctor(symptom=err, service=name, auto=True)
                     )
+                    def _log_exception(t):
+                        if not t.cancelled() and (exc := t.exception()):
+                            logger.error(f"[doctor] Auto-call failed: {exc}")
+                    task.add_done_callback(_log_exception)
 
 
 def get_health_status() -> dict:
