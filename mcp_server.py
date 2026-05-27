@@ -1163,6 +1163,28 @@ async def _release_session():
 
 # ─── Startup ───
 
+# ─── Self-Healing Doctor ───
+
+@mcp.tool()
+async def doctor_check() -> str:
+    """Check health of all Lappy services Alphabetty depends on."""
+    from core.doctor import get_health_status
+    return json.dumps(get_health_status())
+
+
+@mcp.tool()
+async def doctor_call(symptom: str, service: str = "") -> str:
+    """Call Dr. Claude Code to diagnose and fix a failing Lappy service.
+
+    Args:
+        symptom: What's broken. Include error messages.
+        service: Service name: searxng, ollama, litellm, docker, chrome
+    """
+    from core.doctor import call_doctor
+    result = await call_doctor(symptom=symptom, service=service)
+    return json.dumps(result)
+
+
 async def _wait_for_server():
     """Wait for Alphabetty to be ready."""
     for i in range(60):

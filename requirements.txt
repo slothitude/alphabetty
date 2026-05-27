@@ -26,3 +26,5 @@ pyotp>=2.9
 # Auth: JWT tokens + password hashing
 PyJWT>=2.8.0
 bcrypt>=4.0.0
+# SSH for self-healing doctor
+paramiko>=3.5.0

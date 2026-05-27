@@ -58,6 +58,15 @@ class Settings(BaseSettings):
     swarm_peers: str = ""       # Comma-separated "name=url" pairs
     swarm_key: str = ""         # Shared auth key for inter-instance calls
 
+    # Self-healing doctor
+    doctor_enabled: bool = True
+    doctor_timeout: int = 300       # Max seconds for doctor SSH session
+    ssh_host: str = "192.168.0.33"  # LAN IP (primary)
+    ssh_host_tailscale: str = "100.84.161.63"  # Tailscale fallback
+    ssh_user: str = "aaron"
+    ssh_pass: str = ""              # Set via ALPHABETTY_SSH_PASS
+    ssh_port: int = 22
+
     model_config = {"env_prefix": "ALPHABETTY_"}
 
 

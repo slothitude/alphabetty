@@ -108,15 +108,27 @@ async def lifespan(app: FastAPI):
             except Exception as e:
                 _bg_logger.debug(f"Swarm health check failed: {e}")
 
+    async def _doctor_loop():
+        """Periodically check Lappy service health and auto-heal."""
+        while True:
+            await asyncio.sleep(60)
+            try:
+                from core.doctor import run_health_checks
+                await run_health_checks()
+            except Exception as e:
+                _bg_logger.debug(f"Doctor health check failed: {e}")
+
     chrome_task = asyncio.create_task(_chrome_health_check())
     cleanup_task = asyncio.create_task(_session_cleanup())
     provider_task = asyncio.create_task(_provider_refresh())
     swarm_task = asyncio.create_task(_swarm_health_loop())
+    doctor_task = asyncio.create_task(_doctor_loop())
     yield
     chrome_task.cancel()
     cleanup_task.cancel()
     provider_task.cancel()
     swarm_task.cancel()
+    doctor_task.cancel()
 
 
 app = FastAPI(title="Alphabetty", lifespan=lifespan)

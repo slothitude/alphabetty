@@ -408,6 +408,11 @@ async def execute_tool(name: str, args: dict, session: AgentSession | None = Non
             models = provider_router.list_models()
             return {"tool": "list_models", "models": models, "total": len(models)}
 
+        elif name == "call_doctor":
+            from core.doctor import call_doctor as _call_doctor
+            result = await _call_doctor(symptom=args["symptom"], service=args.get("service", ""))
+            return {"tool": "call_doctor", **result}
+
         elif name in (
             "media_search", "search_tmdb", "media_request", "media_requests",
             "radarr_movies", "radarr_queue", "sonarr_series", "sonarr_queue",
@@ -632,6 +637,12 @@ def format_tool_result_for_llm(tool_result: dict) -> str:
             if len(ids) > 10:
                 lines.append(f"    ... and {len(ids) - 10} more")
         return "\n".join(lines)
+
+    elif tool == "call_doctor":
+        if tool_result.get("error"):
+            return f"Doctor call failed: {tool_result['error']}"
+        status = "FIXED" if tool_result.get("success") else "ATTEMPTED"
+        return f"Doctor [{status}]: {tool_result.get('output', '')[:3000]}"
 
     return json.dumps(tool_result)
 

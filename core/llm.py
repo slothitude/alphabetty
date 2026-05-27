@@ -502,6 +502,21 @@ AGENT_TOOLS = [
             },
         },
     },
+    {
+        "type": "function",
+        "function": {
+            "name": "call_doctor",
+            "description": "Summon Dr. Claude Code to diagnose and fix a failing Lappy service. SSHes to Lappy and runs Claude Code headless with full diagnostic context. Use when search errors persist, Chrome is down, or other Lappy services are unresponsive.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "symptom": {"type": "string", "description": "What's broken. Include error messages."},
+                    "service": {"type": "string", "description": "Service name: searxng, ollama, litellm, docker, chrome", "default": ""},
+                },
+                "required": ["symptom"],
+            },
+        },
+    },
 ]
 
 # ── Append media stack tools (fetched from OpenAI-compatible API) ──
@@ -562,6 +577,9 @@ AGENT_SYSTEM = """You are Alphabetty, an autonomous AI research agent with full 
 - **workflow_run(workflow_id, data)** — Trigger a workflow execution
 - **workflow_status(workflow_id, limit)** — Check execution history for a workflow
 - **workflow_delete(workflow_id)** — Delete a workflow
+
+### Self-Healing
+- **call_doctor(symptom, service)** — SSH to Lappy and run Claude Code headless to diagnose/fix failing services. Use when search, Ollama, or other Lappy services are down.
 
 ## Agent Strategy
 1. Start by searching for the user's query
@@ -790,7 +808,7 @@ _TOOL_GROUPS = {
     "core": {
         "search", "browse", "extract", "click", "type_text", "screenshot",
         "scroll", "wait_for", "tab_list", "tab_new", "delegate", "download",
-        "download_save", "download_list", "list_models",
+        "download_save", "download_list", "list_models", "call_doctor",
     },
     "media": {
         "youtube_play", "video_play",
@@ -1006,6 +1024,8 @@ def build_system_prompt(tools: list[dict]) -> str:
         utility_tools.append("- **download_list(subdir)** — List saved files in download directory")
     if "list_models" in available:
         utility_tools.append("- **list_models()** — List all available LLM models across providers")
+    if "call_doctor" in available:
+        utility_tools.append("- **call_doctor(symptom, service)** — Summon Dr. Claude Code to diagnose and fix failing Lappy services via SSH")
 
     if utility_tools:
         sections.append("### Utility\n" + "\n".join(utility_tools))
