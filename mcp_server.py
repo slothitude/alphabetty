@@ -116,6 +116,37 @@ async def search(query: str, categories: str = "general", max_results: int = 10)
 
 
 @mcp.tool()
+async def read_url(url: str, max_length: int = 50000, format: str = "text",
+                   include_links: bool = False) -> str:
+    """Fetch a URL and return clean extracted text. Fast HTTP fetch with 30-min cache. Use this instead of cdp_navigate+cdp_get_content for reading articles and documentation.
+
+    Args:
+        url: URL to fetch and extract text from
+        max_length: Maximum text length to return (default 50000)
+        format: Output format — "text" (default) or "markdown" (add heading markers)
+        include_links: Include extracted links summary (default false)
+    """
+    return json.dumps(await _get("/api/read-url", {
+        "url": url, "max_length": max_length, "format": format,
+        "include_links": str(include_links).lower(),
+    }))
+
+
+@mcp.tool()
+async def search_and_read(query: str, max_results: int = 3, max_length_per_page: int = 8000) -> str:
+    """Search the web and read the top results in one call. Returns search snippets plus full extracted text from each page. Much faster than search then read_url separately.
+
+    Args:
+        query: Search query string
+        max_results: Number of top results to read (1-5, default 3)
+        max_length_per_page: Max text length per page (default 8000)
+    """
+    return json.dumps(await _post("/api/search-and-read", {
+        "query": query, "max_results": max_results, "max_length_per_page": max_length_per_page,
+    }))
+
+
+@mcp.tool()
 async def deep_research(query: str, depth: int = 3, mode: str = "detailed") -> str:
     """Multi-round deep research pipeline: plan search queries, execute searches, extract content from sources, analyze gaps, and synthesize a comprehensive report.
 

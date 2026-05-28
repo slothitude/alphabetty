@@ -131,30 +131,38 @@ async def execute_tool(name: str, args: dict, session: AgentSession | None = Non
             }
 
         elif name == "browse":
-            tid = session.get_tab_id() if session else None
-            if tid:
-                # Use CDP to navigate and extract — handles JS-heavy pages
-                from core.cdp_bridge import cdp
-                await cdp.navigate(args["url"], tab_id=tid)
-                await asyncio.sleep(2)
-                title = await cdp.evaluate("document.title", tab_id=tid)
-                content = await cdp.get_content(tab_id=tid)
-                return {
-                    "tool": "browse",
-                    "url": args["url"],
-                    "title": title or "",
-                    "text": (content or "")[:12000],
-                }
-            else:
-                # Fallback: HTTP fetch
-                content = await fetch_and_extract(args["url"])
+            # Fast path: HTTP fetch first (1-3s), fall back to CDP for JS-heavy pages
+            content = await fetch_and_extract(args["url"])
+            if content.get("text") and len(content["text"]) > 200:
                 return {
                     "tool": "browse",
                     "url": args["url"],
                     "title": content.get("title", ""),
-                    "text": content.get("text", "")[:12000],
-                    "error": content.get("error"),
+                    "text": content["text"][:12000],
                 }
+            # CDP fallback for JS-rendered pages or empty HTTP results
+            tid = session.get_tab_id() if session else None
+            if tid:
+                from core.cdp_bridge import cdp
+                await cdp.navigate(args["url"], tab_id=tid)
+                await asyncio.sleep(2)
+                title = await cdp.evaluate("document.title", tab_id=tid)
+                cdp_content = await cdp.get_content(tab_id=tid)
+                return {
+                    "tool": "browse",
+                    "url": args["url"],
+                    "title": title or content.get("title", ""),
+                    "text": (cdp_content or content.get("text", ""))[:12000],
+                    "via": "cdp",
+                }
+            # No CDP available — return whatever HTTP gave us
+            return {
+                "tool": "browse",
+                "url": args["url"],
+                "title": content.get("title", ""),
+                "text": content.get("text", "")[:12000],
+                "error": content.get("error"),
+            }
 
         elif name == "extract":
             from core.cdp_bridge import cdp
