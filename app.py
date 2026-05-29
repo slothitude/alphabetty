@@ -107,9 +107,9 @@ async def lifespan(app: FastAPI):
                 if _mcp_mod.BOOTSTRAP_TOKEN and not _mcp_mod.API_KEY:
                     await _mcp_mod._acquire_session()
                     if _mcp_mod._leased_key:
-                        _bg_logger.info(f"MCP session acquired: key={_mcp_mod._leased_key[:8]}...")
+                        print(f"MCP session acquired: key={_mcp_mod._leased_key[:8]}...")
         except Exception as e:
-            _bg_logger.warning(f"MCP session acquire failed: {e}")
+            print(f"MCP session acquire failed: {e}")
     asyncio.create_task(_mcp_session_delayed())
 
     async def _swarm_health_loop():

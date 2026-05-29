@@ -135,7 +135,7 @@ print("Building image...")
 stdin, stdout, stderr = ssh.exec_command(f"cd {remote_base} && docker compose build --no-cache", timeout=600)
 for line in iter(stdout.readline, ""):
     if line:
-        print(line.rstrip(), errors="replace")
+        print(line.rstrip().encode("utf-8", errors="replace").decode("utf-8"))
 err = stderr.read().decode()
 if err:
     # Print last 1000 chars of stderr

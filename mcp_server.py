@@ -1199,8 +1199,8 @@ async def _release_session():
 @mcp.tool()
 async def doctor_check() -> str:
     """Check health of all Lappy services Alphabetty depends on."""
-    from core.doctor import get_health_status
-    return json.dumps(get_health_status())
+    from core.doctor import get_health_status, get_fix_log
+    return json.dumps({"health": get_health_status(), "recent_fixes": get_fix_log()[-10:]})
 
 
 @mcp.tool()
@@ -1209,7 +1209,7 @@ async def doctor_call(symptom: str, service: str = "") -> str:
 
     Args:
         symptom: What's broken. Include error messages.
-        service: Service name: searxng, ollama, litellm, docker, chrome
+        service: Service name: searxng, ollama, litellm
     """
     from core.doctor import call_doctor
     result = await call_doctor(symptom=symptom, service=service)
