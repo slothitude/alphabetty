@@ -1022,8 +1022,7 @@ async def computer_screenshot(tab_id: str = "") -> str:
     params = {"format": "jpeg"}
     if tab_id:
         params["tab_id"] = tab_id
-    result = await _get("/api/cdp/screenshot", params)
-    # _get returns JSON, but screenshot returns binary — use _post path which handles binary
+    # Screenshot returns binary — can't use _get() which expects JSON
     async with httpx.AsyncClient(timeout=TIMEOUT) as client:
         r = await client.get(f"{BASE}/api/cdp/screenshot", params=params, headers=_headers())
         r.raise_for_status()
