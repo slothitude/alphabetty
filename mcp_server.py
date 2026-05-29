@@ -1005,6 +1005,92 @@ async def upload_file_url(selector: str, file_url: str, tab_id: str = "") -> str
     return json.dumps(await _post("/api/cdp/upload-url", payload))
 
 
+# ─── Computer Use (screen control for AI agents) ───
+
+_VP = os.environ.get("ALPHABETTY_CHROME_WINDOW_SIZE", "1920,1080")
+_VP_W, _VP_H = [int(x) for x in _VP.split(",")]
+
+
+@mcp.tool()
+async def computer_screenshot(tab_id: str = "") -> str:
+    """Take a screenshot of the current browser viewport. Returns base64-encoded JPEG image with viewport dimensions.
+    Use this to see the current state of the page before taking actions.
+
+    Args:
+        tab_id: Target tab ID (optional)
+    """
+    params = {"format": "jpeg"}
+    if tab_id:
+        params["tab_id"] = tab_id
+    result = await _get("/api/cdp/screenshot", params)
+    # _get returns JSON, but screenshot returns binary — use _post path which handles binary
+    async with httpx.AsyncClient(timeout=TIMEOUT) as client:
+        r = await client.get(f"{BASE}/api/cdp/screenshot", params=params, headers=_headers())
+        r.raise_for_status()
+        img_b64 = base64.b64encode(r.content).decode()
+    return json.dumps({"image": img_b64, "width": _VP_W, "height": _VP_H, "format": "jpeg"})
+
+
+@mcp.tool()
+async def computer_click(x: float, y: float, tab_id: str = "") -> str:
+    """Click at exact pixel coordinates on the screen. Use after computer_screenshot to determine where to click.
+
+    Args:
+        x: X coordinate (pixels from left)
+        y: Y coordinate (pixels from top)
+        tab_id: Target tab ID (optional)
+    """
+    payload = {"x": x, "y": y}
+    if tab_id:
+        payload["tab_id"] = tab_id
+    return json.dumps(await _post("/api/cdp/click-at", payload))
+
+
+@mcp.tool()
+async def computer_type(text: str, tab_id: str = "") -> str:
+    """Type text into the currently focused element. Click on an input field first with computer_click, then use this to type.
+
+    Args:
+        text: Text to type into the focused element
+        tab_id: Target tab ID (optional)
+    """
+    payload = {"text": text}
+    if tab_id:
+        payload["tab_id"] = tab_id
+    return json.dumps(await _post("/api/cdp/insert-text", payload))
+
+
+@mcp.tool()
+async def computer_scroll(direction: str, amount: int = 300, tab_id: str = "") -> str:
+    """Scroll the page up or down by a specified amount in pixels.
+
+    Args:
+        direction: Scroll direction — "up" or "down"
+        amount: Number of pixels to scroll (default 300)
+        tab_id: Target tab ID (optional)
+    """
+    y = -abs(amount) if direction.lower() == "up" else abs(amount)
+    payload = {"x": 0, "y": y}
+    if tab_id:
+        payload["tab_id"] = tab_id
+    return json.dumps(await _post("/api/cdp/scroll", payload))
+
+
+@mcp.tool()
+async def computer_key(key: str, tab_id: str = "") -> str:
+    """Press a keyboard key or key combination. Supports modifier combos like 'ctrl+a', 'ctrl+c', 'ctrl+v', 'shift+tab', etc.
+    Also supports special keys: Enter, Tab, Escape, Backspace, Delete, ArrowUp, ArrowDown, etc.
+
+    Args:
+        key: Key or key combo to press (e.g. 'Enter', 'ctrl+a', 'ctrl+c', 'Escape', 'Tab', 'shift+tab')
+        tab_id: Target tab ID (optional)
+    """
+    payload = {"key": key}
+    if tab_id:
+        payload["tab_id"] = tab_id
+    return json.dumps(await _post("/api/cdp/press-key", payload))
+
+
 # ─── Download Proxy ───
 
 @mcp.tool()

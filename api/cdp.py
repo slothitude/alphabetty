@@ -160,6 +160,11 @@ class ClickAtRequest(BaseModel):
     tab_id: Optional[str] = None
 
 
+class PressKeyRequest(BaseModel):
+    key: str
+    tab_id: Optional[str] = None
+
+
 class IframeRequest(BaseModel):
     selector: str
     iframe_selector: str = "iframe"
@@ -373,6 +378,13 @@ async def click_at(req: ClickAtRequest, user: User = Depends(get_current_user)):
     """Fast mouse click at exact coordinates. No delays."""
     result = await cdp.click_at(req.x, req.y, tab_id=req.tab_id)
     return result
+
+
+@router.post("/cdp/press-key")
+@cdp_handler
+async def press_key(req: PressKeyRequest, user: User = Depends(get_current_user)):
+    """Press a key or key combo (e.g. 'ctrl+a', 'Enter', 'Escape')."""
+    return await cdp.press_key(req.key, tab_id=req.tab_id)
 
 
 @router.post("/cdp/click-iframe")

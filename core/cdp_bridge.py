@@ -20,6 +20,55 @@ logger = logging.getLogger(__name__)
 # Macro recorder hook — set by core.macro when recording is active
 _recorder = None
 
+# ─── Keyboard key mapping for press_key() ───
+
+_KEY_MAP = {
+    "enter":     {"key": "Enter",      "code": "Enter",      "windowsVirtualKeyCode": 13},
+    "return":    {"key": "Enter",      "code": "Enter",      "windowsVirtualKeyCode": 13},
+    "tab":       {"key": "Tab",        "code": "Tab",        "windowsVirtualKeyCode": 9},
+    "escape":    {"key": "Escape",     "code": "Escape",     "windowsVirtualKeyCode": 27},
+    "esc":       {"key": "Escape",     "code": "Escape",     "windowsVirtualKeyCode": 27},
+    "backspace": {"key": "Backspace",  "code": "Backspace",  "windowsVirtualKeyCode": 8},
+    "delete":    {"key": "Delete",     "code": "Delete",     "windowsVirtualKeyCode": 46},
+    "insert":    {"key": "Insert",     "code": "Insert",     "windowsVirtualKeyCode": 45},
+    "home":      {"key": "Home",       "code": "Home",       "windowsVirtualKeyCode": 36},
+    "end":       {"key": "End",        "code": "End",        "windowsVirtualKeyCode": 35},
+    "pageup":    {"key": "PageUp",     "code": "PageUp",     "windowsVirtualKeyCode": 33},
+    "pagedown":  {"key": "PageDown",   "code": "PageDown",   "windowsVirtualKeyCode": 34},
+    "arrowup":   {"key": "ArrowUp",    "code": "ArrowUp",    "windowsVirtualKeyCode": 38},
+    "arrowdown": {"key": "ArrowDown",  "code": "ArrowDown",  "windowsVirtualKeyCode": 40},
+    "arrowleft": {"key": "ArrowLeft",  "code": "ArrowLeft",  "windowsVirtualKeyCode": 37},
+    "arrowright":{"key": "ArrowRight", "code": "ArrowRight", "windowsVirtualKeyCode": 39},
+    "up":        {"key": "ArrowUp",    "code": "ArrowUp",    "windowsVirtualKeyCode": 38},
+    "down":      {"key": "ArrowDown",  "code": "ArrowDown",  "windowsVirtualKeyCode": 40},
+    "left":      {"key": "ArrowLeft",  "code": "ArrowLeft",  "windowsVirtualKeyCode": 37},
+    "right":     {"key": "ArrowRight", "code": "ArrowRight", "windowsVirtualKeyCode": 39},
+    "space":     {"key": " ",          "code": "Space",      "windowsVirtualKeyCode": 32},
+    "capslock":  {"key": "CapsLock",   "code": "CapsLock",   "windowsVirtualKeyCode": 20},
+    "f1":  {"key": "F1",  "code": "F1",  "windowsVirtualKeyCode": 112},
+    "f2":  {"key": "F2",  "code": "F2",  "windowsVirtualKeyCode": 113},
+    "f3":  {"key": "F3",  "code": "F3",  "windowsVirtualKeyCode": 114},
+    "f4":  {"key": "F4",  "code": "F4",  "windowsVirtualKeyCode": 115},
+    "f5":  {"key": "F5",  "code": "F5",  "windowsVirtualKeyCode": 116},
+    "f6":  {"key": "F6",  "code": "F6",  "windowsVirtualKeyCode": 117},
+    "f7":  {"key": "F7",  "code": "F7",  "windowsVirtualKeyCode": 118},
+    "f8":  {"key": "F8",  "code": "F8",  "windowsVirtualKeyCode": 119},
+    "f9":  {"key": "F9",  "code": "F9",  "windowsVirtualKeyCode": 120},
+    "f10": {"key": "F10", "code": "F10", "windowsVirtualKeyCode": 121},
+    "f11": {"key": "F11", "code": "F11", "windowsVirtualKeyCode": 122},
+    "f12": {"key": "F12", "code": "F12", "windowsVirtualKeyCode": 123},
+}
+
+_MODIFIER_MAP = {
+    "ctrl":  2,
+    "control": 2,
+    "shift": 8,
+    "alt":   1,
+    "meta":  4,
+    "cmd":   4,
+    "command": 4,
+}
+
 # Stealth JS injected on every page load via Page.addScriptToEvaluateOnNewDocument
 STEALTH_JS = """
 // navigator.webdriver = undefined (not false — undefined is more natural)
@@ -505,6 +554,82 @@ class CDPBridge:
                 "button": "left", "clickCount": 1,
             }, tab_id=tab_id)
         return {"status": "clicked", "x": x, "y": y}
+
+    async def press_key(self, key: str, tab_id: str = None) -> dict:
+        """Press a key or key combo (e.g. "ctrl+a", "Enter", "Escape").
+        Dispatches CDP Input.dispatchKeyEvent for each key event."""
+        if _recorder and _recorder.recording:
+            _recorder.record_step("press_key", {"key": key})
+
+        # Parse combo syntax: "ctrl+a" → modifier + key
+        parts = key.lower().replace(" ", "").split("+")
+        modifiers = 0
+        actual_key = parts[-1]
+
+        for part in parts[:-1]:
+            if part in _MODIFIER_MAP:
+                modifiers |= _MODIFIER_MAP[part]
+
+        # Resolve the actual key
+        resolved = _KEY_MAP.get(actual_key)
+        if not resolved:
+            # Single character (a-z, 0-9, symbols)
+            code = actual_key.upper()
+            vk = ord(actual_key.upper()) if len(actual_key) == 1 else 0
+            resolved = {"key": actual_key, "code": f"Key{code}" if actual_key.isalpha() else code, "windowsVirtualKeyCode": vk}
+
+        async with self._get_tab_lock(tab_id):
+            # Press modifier keys
+            mod_names = [p for p in parts[:-1] if p in _MODIFIER_MAP]
+            for mod in mod_names:
+                mod_bit = _MODIFIER_MAP[mod]
+                mod_key = {"ctrl": "Control", "control": "Control", "shift": "Shift",
+                           "alt": "Alt", "meta": "Meta", "cmd": "Meta", "command": "Meta"}[mod]
+                await self.send_command("Input.dispatchKeyEvent", {
+                    "type": "keyDown",
+                    "key": mod_key,
+                    "code": f"{mod_key}Left",
+                    "windowsVirtualKeyCode": 17 if mod_bit == 2 else (16 if mod_bit == 8 else (18 if mod_bit == 1 else 91)),
+                    "modifiers": modifiers,
+                }, tab_id=tab_id)
+
+            # Press the actual key
+            key_down_params = {
+                "type": "keyDown",
+                "key": resolved["key"],
+                "code": resolved["code"],
+                "windowsVirtualKeyCode": resolved["windowsVirtualKeyCode"],
+            }
+            if modifiers:
+                key_down_params["modifiers"] = modifiers
+            # Add text for printable keys
+            if len(actual_key) == 1 and actual_key.isprintable():
+                key_down_params["text"] = actual_key
+            await self.send_command("Input.dispatchKeyEvent", key_down_params, tab_id=tab_id)
+
+            key_up_params = {
+                "type": "keyUp",
+                "key": resolved["key"],
+                "code": resolved["code"],
+                "windowsVirtualKeyCode": resolved["windowsVirtualKeyCode"],
+            }
+            if modifiers:
+                key_up_params["modifiers"] = modifiers
+            await self.send_command("Input.dispatchKeyEvent", key_up_params, tab_id=tab_id)
+
+            # Release modifier keys in reverse order
+            for mod in reversed(mod_names):
+                mod_bit = _MODIFIER_MAP[mod]
+                mod_key = {"ctrl": "Control", "control": "Control", "shift": "Shift",
+                           "alt": "Alt", "meta": "Meta", "cmd": "Meta", "command": "Meta"}[mod]
+                await self.send_command("Input.dispatchKeyEvent", {
+                    "type": "keyUp",
+                    "key": mod_key,
+                    "code": f"{mod_key}Left",
+                    "windowsVirtualKeyCode": 17 if mod_bit == 2 else (16 if mod_bit == 8 else (18 if mod_bit == 1 else 91)),
+                }, tab_id=tab_id)
+
+        return {"status": "pressed", "key": key}
 
     async def click_iframe(self, selector: str, iframe_selector: str = "iframe",
                            tab_id: str = None) -> dict:
