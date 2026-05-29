@@ -98,6 +98,20 @@ async def lifespan(app: FastAPI):
     except Exception as e:
         _bg_logger.debug(f"Swarm init skipped: {e}")
 
+    # Acquire MCP session for SSE tools (delayed — server must be listening)
+    async def _mcp_session_delayed():
+        await asyncio.sleep(3)  # Wait for uvicorn to start accepting connections
+        try:
+            if _os.environ.get("ALPHABETTY_MCP_SSE", "").lower() in ("1", "true", "yes"):
+                import mcp_server as _mcp_mod
+                if _mcp_mod.BOOTSTRAP_TOKEN and not _mcp_mod.API_KEY:
+                    await _mcp_mod._acquire_session()
+                    if _mcp_mod._leased_key:
+                        _bg_logger.info(f"MCP session acquired: key={_mcp_mod._leased_key[:8]}...")
+        except Exception as e:
+            _bg_logger.warning(f"MCP session acquire failed: {e}")
+    asyncio.create_task(_mcp_session_delayed())
+
     async def _swarm_health_loop():
         """Periodically check swarm peer health."""
         while True:
@@ -224,7 +238,7 @@ app.include_router(media_router, prefix="/api")
 import os as _os
 _mcp_enabled = _os.environ.get("ALPHABETTY_MCP_SSE", "").lower() in ("1", "true", "yes")
 if _mcp_enabled:
-    from mcp_server import mcp as _mcp
+    from mcp_server import mcp as _mcp, _acquire_session, API_KEY, BOOTSTRAP_TOKEN
     _mcp_app = _mcp.http_app(transport="sse", path="/sse")
     from starlette.routing import Mount
     app.mount("/mcp", _mcp_app)

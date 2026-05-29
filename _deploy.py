@@ -54,6 +54,26 @@ files_to_sync = [
     "api/export.py",
     "api/agent.py",
     ".dockerignore",
+    "mcp_server.py",
+    "core/auth.py",
+    "core/events.py",
+    "core/macro.py",
+    "core/n8n.py",
+    "core/providers.py",
+    "core/media.py",
+    "core/swarm.py",
+    "api/auth.py",
+    "api/workflows.py",
+    "api/extension.py",
+    "api/download.py",
+    "api/share.py",
+    "api/models.py",
+    "api/swarm.py",
+    "api/media.py",
+    "api/tools.py",
+    "api/signin.py",
+    "models/user.py",
+    "static/js/dashboard.js",
 ]
 
 synced = 0
@@ -115,7 +135,7 @@ print("Building image...")
 stdin, stdout, stderr = ssh.exec_command(f"cd {remote_base} && docker compose build --no-cache", timeout=600)
 for line in iter(stdout.readline, ""):
     if line:
-        print(line.rstrip())
+        print(line.rstrip(), errors="replace")
 err = stderr.read().decode()
 if err:
     # Print last 1000 chars of stderr
