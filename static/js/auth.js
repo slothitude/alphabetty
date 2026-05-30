@@ -3,7 +3,6 @@ const auth = {
     user: null,
 
     async init() {
-        // Check if we're on the login page or app page
         if (document.getElementById('login-page')) {
             this.initLoginPage();
         } else {
@@ -53,6 +52,7 @@ const auth = {
                     const resp = await fetch(endpoint, {
                         method: 'POST',
                         headers: { 'Content-Type': 'application/json' },
+                        credentials: 'include',
                         body: JSON.stringify(body),
                     });
 
@@ -64,8 +64,12 @@ const auth = {
                         return;
                     }
 
-                    // Success — redirect to app
-                    window.location.href = '/';
+                    // Success — load dashboard directly (avoids cookie timing issues on navigation)
+                    const page = await fetch('/', { credentials: 'include' });
+                    const html = await page.text();
+                    document.open();
+                    document.write(html);
+                    document.close();
                 } catch (err) {
                     errorEl.textContent = 'Connection error';
                     errorEl.style.display = 'block';
@@ -76,16 +80,16 @@ const auth = {
 
     async checkSession() {
         try {
-            const resp = await fetch('/api/auth/me');
+            const resp = await fetch('/api/auth/me', { credentials: 'include' });
             if (resp.ok) {
                 this.user = await resp.json();
                 this.updateUI();
                 return true;
             }
         } catch {}
-        // Not authenticated — redirect to login
+        // Not authenticated — redirect to login (only if not already on login page)
         if (!document.getElementById('login-page')) {
-            window.location.href = '/';
+            location.replace('/');
         }
         return false;
     },
@@ -101,13 +105,15 @@ const auth = {
     },
 
     async logout() {
-        // Close EventSource before clearing session
         if (typeof app !== 'undefined' && app._eventSource) {
             app._eventSource.close();
             app._eventSource = null;
         }
-        await fetch('/api/auth/logout', { method: 'POST' });
+        try { await fetch('/api/auth/logout', { method: 'POST', credentials: 'include' }); } catch {}
         this.user = null;
-        window.location.href = '/';
+        // Clear cookie client-side to guarantee it's gone before redirect
+        document.cookie = 'access_token=; Path=/; Expires=Thu, 01 Jan 1970 00:00:00 GMT; SameSite=Lax' +
+            (location.protocol === 'https:' ? '; Secure' : '');
+        location.replace('/');
     }
 };

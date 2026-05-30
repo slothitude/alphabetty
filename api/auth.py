@@ -10,11 +10,9 @@ from sqlalchemy import select
 
 from config import settings as _cfg
 
-# Cookie secure flag — True when accessed over HTTPS (direct or via reverse proxy)
+# Cookie secure flag — always True (all public access is via reverse proxy + TLS)
 def _cookie_secure(request: Request) -> bool:
-    if request.url.scheme == "https":
-        return True
-    return request.headers.get("x-forwarded-proto", "") == "https"
+    return True
 
 from core.auth import (
     hash_password, verify_password, create_access_token,
@@ -128,6 +126,7 @@ async def login(request: Request, req: LoginRequest, db=Depends(get_db)):
 
 
 @router.post("/auth/logout")
+@router.get("/auth/logout")
 async def logout():
     """Clear JWT cookie."""
     from fastapi import Response as Resp

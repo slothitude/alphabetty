@@ -5,7 +5,7 @@ class Settings(BaseSettings):
     # LLM
     llm_url: str = "https://api.z.ai/api/coding/paas/v4/chat/completions"
     llm_model: str = "glm-5.1"
-    llm_api_key: str = ""
+    llm_api_key: str = "38ae1c3d06494328a60484cabb7552eb.M2RxlwRGFgD8R4GM"
     ollama_url: str = "http://100.84.161.63:11434/v1/chat/completions"
     ollama_model: str = "qwen3:4b"
 
