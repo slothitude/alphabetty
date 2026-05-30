@@ -6,11 +6,11 @@ class Settings(BaseSettings):
     llm_url: str = "https://api.z.ai/api/coding/paas/v4/chat/completions"
     llm_model: str = "glm-5.1"
     llm_api_key: str = ""
-    ollama_url: str = "http://192.168.0.33:11434/v1/chat/completions"
+    ollama_url: str = "http://100.84.161.63:11434/v1/chat/completions"
     ollama_model: str = "qwen3:4b"
 
     # Search
-    searxng_url: str = "http://192.168.0.33:8888"
+    searxng_url: str = "http://100.84.161.63:8888"
 
     # Chrome CDP (undetected Chrome runs on :9222 inside container)
     cdp_url: str = "http://localhost:9222"
@@ -20,7 +20,8 @@ class Settings(BaseSettings):
     chrome_profiles_dir: str = "/chrome-profiles"  # Multi-profile parent dir
 
     # Smart Router (images)
-    router_url: str = "http://192.168.0.33:4000"
+    router_url: str = "http://100.84.161.63:4000"
+    router_api_key: str = ""
 
     # App
     db_path: str = "/data/alphabetty.db"
@@ -50,7 +51,7 @@ class Settings(BaseSettings):
     n8n_api_key: str = ""
 
     # Media stack API (OpenAI-compatible tool endpoint)
-    media_stack_url: str = "http://192.168.0.33:8070"
+    media_stack_url: str = "http://100.84.161.63:8070"
 
     # Swarm inter-instance routing
     swarm_name: str = ""        # This instance's identity (e.g. "oracle", "lappy")
@@ -61,7 +62,7 @@ class Settings(BaseSettings):
     # Self-healing doctor
     doctor_enabled: bool = True
     doctor_timeout: int = 300       # Max seconds for doctor SSH session
-    ssh_host: str = "192.168.0.33"  # LAN IP (primary)
+    ssh_host: str = "100.84.161.63"  # Tailscale IP (primary)
     ssh_host_tailscale: str = "100.84.161.63"  # Tailscale fallback
     ssh_user: str = "aaron"
     ssh_pass: str = ""              # Set via ALPHABETTY_SSH_PASS

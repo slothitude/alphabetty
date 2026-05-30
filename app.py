@@ -245,6 +245,12 @@ if _mcp_enabled:
     print("MCP SSE endpoint mounted at /mcp/sse")
 
 
+@app.get("/_app/{path:path}")
+async def sveltekit_assets(path: str):
+    from fastapi.responses import Response
+    return Response(status_code=204)
+
+
 @app.get("/")
 async def index(request: Request):
     from fastapi.responses import FileResponse

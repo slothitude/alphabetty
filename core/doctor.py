@@ -369,9 +369,13 @@ async def _check_ollama():
 async def _check_litellm():
     """Check LiteLLM proxy is responding."""
     from config import settings
+    if not settings.router_api_key:
+        return True, ""  # No key configured — skip check
     try:
         async with httpx.AsyncClient(timeout=5.0) as client:
-            r = await client.get(f"http://{settings.ssh_host}:4000/v1/models")
+            url = f"http://{settings.ssh_host}:4000/v1/models"
+            headers = {"Authorization": f"Bearer {settings.router_api_key}"}
+            r = await client.get(url, headers=headers)
             if r.status_code == 200:
                 return True, ""
             return False, f"LiteLLM returned HTTP {r.status_code}"
