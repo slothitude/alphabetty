@@ -1080,22 +1080,29 @@ async def _handle_analyze_file(**kwargs) -> dict:
 # ─── Image Handler ───
 
 async def _handle_generate_image(**kwargs) -> dict:
+    import base64
     import httpx
     from config import settings
     try:
         async with httpx.AsyncClient(timeout=httpx.Timeout(120.0)) as client:
             resp = await client.post(
-                f"{settings.router_url}/api/generate",
+                f"{settings.bonsai_url}/generate",
                 json={
                     "prompt": kwargs["prompt"],
-                    "negative_prompt": kwargs.get("negative_prompt", ""),
-                    "width": kwargs.get("width", 1024),
-                    "height": kwargs.get("height", 1024),
+                    "width": kwargs.get("width", 512),
+                    "height": kwargs.get("height", 512),
                     "steps": kwargs.get("steps", 20),
                 },
             )
             resp.raise_for_status()
-            return resp.json()
+            image_b64 = base64.b64encode(resp.content).decode("ascii")
+            return {
+                "status": "success",
+                "image": f"data:image/png;base64,{image_b64}",
+                "size_bytes": len(resp.content),
+                "width": kwargs.get("width", 512),
+                "height": kwargs.get("height", 512),
+            }
     except Exception as e:
         return {"error": str(e), "status": "failed"}
 

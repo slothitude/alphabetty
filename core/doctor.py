@@ -366,21 +366,17 @@ async def _check_ollama():
         return False, f"Ollama unreachable: {e}"
 
 
-async def _check_litellm():
-    """Check LiteLLM proxy is responding."""
+async def _check_bonsai():
+    """Check Bonsai image backend is responding."""
     from config import settings
-    if not settings.router_api_key:
-        return True, ""  # No key configured — skip check
     try:
         async with httpx.AsyncClient(timeout=5.0) as client:
-            url = f"http://{settings.ssh_host}:4000/v1/models"
-            headers = {"Authorization": f"Bearer {settings.router_api_key}"}
-            r = await client.get(url, headers=headers)
+            r = await client.get(f"{settings.bonsai_url}/backends")
             if r.status_code == 200:
                 return True, ""
-            return False, f"LiteLLM returned HTTP {r.status_code}"
+            return False, f"Bonsai returned HTTP {r.status_code}"
     except Exception as e:
-        return False, f"LiteLLM unreachable: {e}"
+        return False, f"Bonsai unreachable: {e}"
 
 
 # ─── Register Default Services ───
@@ -414,10 +410,15 @@ Common issues:
 - Port 11434 taken → 'netstat -ano | findstr 11434' to find conflicting process
 Note: GPU env vars: OLLAMA_KV_CACHE_TYPE=q4_0, OLLAMA_FLASH_ATTENTION=1, OLLAMA_MAX_LOADED_MODELS=1""")
 
-    register_service("litellm", _check_litellm,
+    register_service("bonsai", _check_bonsai,
         container_name="",
-        auto_heal=False,  # Monitor only — not our service to manage
-        runbook="LiteLLM proxy on port 4000. This is monitored but NOT auto-healed by Alphabetty.")
+        auto_heal=False,
+        runbook="""Bonsai Image backend on port 8000. Local image generation model.
+Start: run D:\\Bonsai-Image-Demo\\start_bonsai.bat
+API: POST /generate with {prompt, width, height, steps}
+Returns raw PNG. First inference at new resolution ~60s (JIT compile), subsequent ~4-5s.
+GPU: RTX 3060 Laptop 6GB. Safe resolutions: 512x512, 624x416, 416x624.
+This is monitored but NOT auto-healed by Alphabetty.""")
 
 
 _init_defaults()

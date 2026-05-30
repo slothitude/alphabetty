@@ -19,9 +19,8 @@ class Settings(BaseSettings):
     chrome_window_size: str = "1920,1080"
     chrome_profiles_dir: str = "/chrome-profiles"  # Multi-profile parent dir
 
-    # Smart Router (images)
-    router_url: str = "http://100.84.161.63:4000"
-    router_api_key: str = ""
+    # Bonsai Image (local image generation)
+    bonsai_url: str = "http://100.84.161.63:8000"
 
     # App
     db_path: str = "/data/alphabetty.db"
