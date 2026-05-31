@@ -9,3 +9,9 @@ __pycache__/
 build_status.txt
 build.bat
 extension/
+logs/
+n8n-data/
+.smartloops/
+*.exe
+*.dll
+AppData/
