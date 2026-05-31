@@ -524,18 +524,31 @@ class CDPBridge:
 
     async def _send_on_ws(self, ws, method: str, params: dict = None,
                           timeout: float = 30.0) -> dict:
-        """Send a CDP command on an existing WebSocket connection."""
+        """Send a CDP command on an existing WebSocket connection.
+
+        Loops recv until it gets the response matching its msg_id.
+        Buffers any events received in the meantime onto ws._event_buffer.
+        """
         msg_id = self._next_id()
         payload = {"id": msg_id, "method": method}
         if params:
             payload["params"] = params
         await ws.send(json.dumps(payload))
+        # Ensure event buffer exists on the ws object
+        if not hasattr(ws, "_event_buffer"):
+            ws._event_buffer = []
         try:
-            raw = await asyncio.wait_for(ws.recv(), timeout=timeout)
+            while True:
+                raw = await asyncio.wait_for(ws.recv(), timeout=timeout)
+                msg = json.loads(raw)
+                if msg.get("id") == msg_id:
+                    return msg.get("result", msg)
+                # Buffer events for later consumption
+                if "method" in msg:
+                    ws._event_buffer.append(msg)
+                # Discard responses to other commands we don't care about
         except asyncio.TimeoutError:
             raise TimeoutError(f"CDP command '{method}' timed out after {timeout}s")
-        resp = json.loads(raw)
-        return resp.get("result", resp)
 
     async def _get_ws(self, tab_id: str = None):
         """Get an open WebSocket connection to the active page tab."""
@@ -579,11 +592,11 @@ class CDPBridge:
             _recorder.record_step("navigate", {"url": url})
 
         tab_key = tab_id or "_default"
-        deadline = time.monotonic() + timeout
         nav_result = {}
-
-        # Phase 1: Send Page.navigate
         lock = self._get_tab_lock(tab_id)
+        ws = None
+
+        # Phase 1: Send Page.navigate (hold lock)
         async with lock:
             self._stealth_injected[tab_key] = False
             ws = await self._get_ws(tab_id)
@@ -632,6 +645,13 @@ class CDPBridge:
                     except Exception:
                         pass
 
+                # Enable Page events BEFORE navigate so we receive load events
+                if wait_strategy != "none":
+                    try:
+                        await self._send_on_ws(ws, "Page.enable")
+                    except Exception:
+                        pass
+
                 # Send Page.navigate
                 result = await self._send_on_ws(ws, "Page.navigate", {"url": url})
                 if result.get("errorText"):
@@ -644,53 +664,33 @@ class CDPBridge:
                 raise
             except Exception:
                 raise
-            finally:
-                try:
-                    await ws.close()
-                except Exception:
-                    pass
 
-        # Phase 2: Wait for load (outside tab lock for concurrency)
-        wait_result = None
-        if wait_strategy != "none":
-            ws = await self._get_ws(tab_id)
-            try:
+        # Phase 2: Wait for load — reuse same WS (event buffer preserved)
+        try:
+            if wait_strategy != "none":
                 wait_result = await self._wait_for_load(
-                    ws, tab_id, wait_for, wait_strategy, deadline)
+                    ws, tab_id, wait_for, wait_strategy, timeout)
                 nav_result["wait"] = wait_result
-            except websockets.exceptions.ConnectionClosed:
-                nav_result["wait"] = {"strategy": wait_strategy, "waited_ms": 0,
-                                       "error": "ws_closed"}
-            except Exception as e:
-                nav_result["wait"] = {"strategy": wait_strategy, "waited_ms": 0,
-                                       "error": str(e)}
-            finally:
+
+            # Phase 3: Obstacle detection + extraction — reuse same WS
+            if dismiss_obstacles or extract:
+                if dismiss_obstacles:
+                    obstacles = await self._detect_and_dismiss_obstacles(ws, tab_id)
+                    nav_result["obstacles"] = obstacles
+
+                if extract:
+                    extraction = await self._extract_structured(ws, tab_id)
+                    nav_result["extraction"] = extraction
+        except websockets.exceptions.ConnectionClosed:
+            logger.warning("WS closed during wait/extract phase")
+        except Exception as e:
+            logger.warning(f"Post-navigation phase failed: {e}")
+        finally:
+            if ws:
                 try:
                     await ws.close()
                 except Exception:
                     pass
-
-        # Phase 3: Obstacle detection and dismissal + extraction (re-acquire lock)
-        async with lock:
-            if dismiss_obstacles or extract:
-                ws = await self._get_ws(tab_id)
-                try:
-                    if dismiss_obstacles:
-                        obstacles = await self._detect_and_dismiss_obstacles(ws, tab_id)
-                        nav_result["obstacles"] = obstacles
-
-                    if extract:
-                        extraction = await self._extract_structured(ws, tab_id)
-                        nav_result["extraction"] = extraction
-                except websockets.exceptions.ConnectionClosed:
-                    pass
-                except Exception as e:
-                    logger.warning(f"Post-navigation phase failed: {e}")
-                finally:
-                    try:
-                        await ws.close()
-                    except Exception:
-                        pass
 
         # Human pause
         if human_pause:
@@ -700,8 +700,20 @@ class CDPBridge:
         emit("page.loaded", {"url": url})
         return nav_result
 
+    def _wait_result(self, strategy, start, load_event, dom_event, network_idle, nav_error, selector_found=False):
+        """Build the wait result dict."""
+        return {
+            "strategy": strategy,
+            "waited_ms": int((time.monotonic() - start) * 1000),
+            "load_event": load_event,
+            "dom_event": dom_event,
+            "network_idle": network_idle,
+            "selector_found": selector_found,
+            **({"nav_error": nav_error} if nav_error else {}),
+        }
+
     async def _wait_for_load(self, ws, tab_id: str, wait_for: Optional[str],
-                              strategy: str, deadline: float) -> dict:
+                              strategy: str, timeout: float) -> dict:
         """Wait for page load using persistent WebSocket and raw recv loop.
 
         Args:
@@ -709,27 +721,79 @@ class CDPBridge:
             tab_id: Tab identifier.
             wait_for: CSS selector (for selector strategy).
             strategy: "dom", "network_idle", "smart", or "selector".
-            deadline: Absolute timestamp for timeout.
+            timeout: Max time in seconds for the wait phase.
 
         Returns:
             dict with strategy, waited_ms, load_event, network_idle, selector_found.
         """
         start = time.monotonic()
-        loop = asyncio.get_event_loop()
-
+        deadline = time.monotonic() + timeout
         load_event_fired = False
+        dom_event_fired = False
         network_idle = False
         last_network_activity = start
         nav_error = None
 
-        # Send Page.enable and Network.enable via safe send
+        # Network.enable for network_idle tracking (Page.enable already sent in navigate)
         try:
-            await self._send_on_ws(ws, "Page.enable")
             await self._send_on_ws(ws, "Network.enable")
         except Exception as e:
-            return {"strategy": strategy, "waited_ms": 0, "error": f"enable failed: {e}"}
+            return {"strategy": strategy, "waited_ms": 0, "error": f"Network.enable failed: {e}"}
+
+        # Helper to process a single event message
+        def _process_event(msg):
+            nonlocal load_event_fired, dom_event_fired, network_idle, last_network_activity, nav_error
+            method = msg.get("method", "")
+            if method == "Page.domContentEventFired":
+                dom_event_fired = True
+                return False  # don't auto-break; let caller decide
+            elif method == "Page.loadEventFired":
+                load_event_fired = True
+            elif method.startswith("Network.") and not method.startswith("Network.requestWillBeSent"):
+                last_network_activity = time.monotonic()
+                if method == "Network.loadingFailed":
+                    params = msg.get("params", {})
+                    if not params.get("encodedDataLength"):
+                        nav_error = "loading_failed"
+                if strategy in ("network_idle", "smart"):
+                    if time.monotonic() - last_network_activity > 0.5:
+                        network_idle = True
+                        if strategy == "network_idle":
+                            return True
+                        if strategy == "smart" and (load_event_fired or dom_event_fired):
+                            return True
+            return False
+
+        # Drain event buffer from prior _send_on_ws calls
+        if hasattr(ws, "_event_buffer"):
+            for msg in ws._event_buffer:
+                if _process_event(msg):
+                    if strategy == "dom" and dom_event_fired:
+                        return self._wait_result(strategy, start, load_event_fired, dom_event_fired, network_idle, nav_error)
+                    if strategy == "smart" and load_event_fired and network_idle:
+                        return self._wait_result(strategy, start, load_event_fired, dom_event_fired, network_idle, nav_error)
+            ws._event_buffer.clear()
 
         try:
+            # Check if page is already loaded (handles same-URL/cached navigations
+            # where Chrome doesn't emit domContentEventFired)
+            if strategy in ("dom", "selector", "smart"):
+                try:
+                    ready = await self._send_on_ws(ws, "Runtime.evaluate", {
+                        "expression": "document.readyState",
+                        "returnByValue": True,
+                    })
+                    ready_state = ready.get("result", {}).get("value", "loading")
+                    if ready_state in ("interactive", "complete"):
+                        dom_event_fired = True
+                        if strategy == "dom":
+                            return self._wait_result(strategy, start, load_event_fired, dom_event_fired, network_idle, nav_error)
+                        if strategy == "selector" and dom_event_fired:
+                            # Fall through to selector poll
+                            pass
+                except Exception:
+                    pass
+
             while True:
                 remaining = deadline - time.monotonic()
                 if remaining <= 0:
@@ -738,12 +802,15 @@ class CDPBridge:
                 try:
                     raw = await asyncio.wait_for(ws.recv(), timeout=min(remaining, 1.0))
                 except asyncio.TimeoutError:
-                    # Check network idle (500ms since last Network.* event)
+                    # Check network idle on timeout (500ms since last Network.* event)
                     if strategy in ("network_idle", "smart"):
                         if time.monotonic() - last_network_activity > 0.5:
                             network_idle = True
-                            if strategy == "network_idle" or load_event_fired:
+                            if strategy == "network_idle" or (strategy == "smart" and (load_event_fired or dom_event_fired)):
                                 break
+                    # Selector: break if DOM already loaded (no more events coming)
+                    if strategy == "selector" and dom_event_fired:
+                        break
                     continue
 
                 try:
@@ -755,68 +822,63 @@ class CDPBridge:
                 if "id" in msg:
                     continue
 
-                # Events (have "method")
-                method = msg.get("method", "")
-
-                if method == "Page.loadEventFired":
-                    load_event_fired = True
-                    if strategy == "smart" or strategy == "dom":
-                        # smart: also wait for network idle
-                        # dom: done
-                        if strategy == "dom":
-                            break
-
-                elif method.startswith("Network.") and not method.startswith("Network.requestWillBeSent"):
-                    last_network_activity = time.monotonic()
-
-                    if method == "Network.loadingFailed":
-                        params = msg.get("params", {})
-                        if not params.get("encodedDataLength"):
-                            nav_error = "loading_failed"
-
-                    if strategy in ("network_idle", "smart"):
-                        # Will check idle on next recv timeout
-                        pass
+                # Process events
+                if "method" in msg:
+                    should_break = _process_event(msg)
+                    if should_break:
+                        break
+                    # Check dom/selector break conditions after event processing
+                    if strategy == "dom" and dom_event_fired:
+                        break
+                    if strategy == "selector" and dom_event_fired:
+                        break
         except websockets.exceptions.ConnectionClosed:
             pass
 
         waited_ms = int((time.monotonic() - start) * 1000)
 
-        # Selector poll if needed
+        # Clear any remaining buffered events before poll/extraction phase
+        if hasattr(ws, "_event_buffer"):
+            ws._event_buffer.clear()
+
+        # Disable page/network events to stop the event stream before poll/extraction
+        try:
+            await self._send_on_ws(ws, "Page.disable")
+            await self._send_on_ws(ws, "Network.disable")
+        except Exception:
+            pass
+
+        # Selector poll if needed (short per-iteration timeout to avoid hanging on buffered events)
         selector_found = False
-        if wait_for and (strategy == "selector" or (strategy == "smart" and load_event_fired)):
+        if wait_for and (strategy == "selector" or strategy == "smart"):
             try:
-                for _ in range(int(max(0, deadline - time.monotonic()) / 0.3)):
+                remaining = max(0, deadline - time.monotonic())
+                poll_timeout = min(3.0, remaining)
+                for i in range(int(remaining / 0.3)):
                     if time.monotonic() >= deadline:
                         break
-                    await self._send_on_ws(ws, "Runtime.evaluate", {
-                        "expression": f'document.querySelector("{wait_for}") !== null',
-                        "returnByValue": True,
-                    })
-                    # Read response from the evaluate
-                    raw = await asyncio.wait_for(ws.recv(), timeout=2.0)
-                    resp = json.loads(raw)
-                    if resp.get("result", {}).get("result", {}).get("value") is True:
-                        selector_found = True
+                    try:
+                        result = await self._send_on_ws(ws, "Runtime.evaluate", {
+                            "expression": f'document.querySelector("{wait_for}") !== null',
+                            "returnByValue": True,
+                        }, timeout=poll_timeout)
+                        val = result.get("result", {}).get("value")
+                        if val is True:
+                            selector_found = True
+                            break
+                    except (TimeoutError, asyncio.TimeoutError):
                         break
                     await asyncio.sleep(0.3)
             except Exception:
                 pass
 
-        # Disable network events before extraction
-        try:
-            await self._send_on_ws(ws, "Network.disable")
-        except Exception:
-            pass
+        # Clear any events buffered during selector poll
+        if hasattr(ws, "_event_buffer"):
+            ws._event_buffer.clear()
 
-        return {
-            "strategy": strategy,
-            "waited_ms": waited_ms,
-            "load_event": load_event_fired,
-            "network_idle": network_idle,
-            "selector_found": selector_found,
-            **({"nav_error": nav_error} if nav_error else {}),
-        }
+        # Events already disabled above before poll phase
+
+        return self._wait_result(strategy, start, load_event_fired, dom_event_fired, network_idle, nav_error, selector_found)
 
     async def _detect_and_dismiss_obstacles(self, ws, tab_id: str) -> dict:
         """Detect and auto-dismiss cookie banners and popups.
