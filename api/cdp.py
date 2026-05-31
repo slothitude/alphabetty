@@ -3,16 +3,16 @@ import logging
 import asyncio
 import random
 from functools import wraps
-from typing import Optional
+from typing import Literal, Optional
 
 import httpx
 import websockets
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect, Query, Depends, HTTPException, UploadFile, File
-from pydantic import BaseModel
+from pydantic import BaseModel, field_validator
 
 from config import settings
 from core.auth import get_current_user
-from core.cdp_bridge import cdp
+from core.cdp_bridge import cdp, NavigationError
 from core.macro import recorder
 from core.recording import screen_recorder
 from models.user import User
@@ -74,6 +74,23 @@ def _rate_limited(key: str, max_requests: int = 60, window_sec: int = 60) -> boo
 class NavigateRequest(BaseModel):
     url: str
     tab_id: Optional[str] = None
+    wait_for: Optional[str] = None
+    wait_strategy: Literal["none", "dom", "network_idle", "smart", "selector"] = "none"
+    timeout: float = 30.0
+    extract: bool = False
+    dismiss_obstacles: bool = False
+    referer: Optional[str] = None
+    viewport: Optional[dict] = None  # {"width": int, "height": int}
+    human_pause: bool = True
+
+    @field_validator("wait_strategy", mode="after")
+    @classmethod
+    def validate_selector_requires_wait_for(cls, v, info):
+        if v == "selector":
+            data = info.data
+            if not data.get("wait_for"):
+                raise ValueError("wait_strategy='selector' requires wait_for")
+        return v
 
 
 class QueryRequest(BaseModel):
@@ -297,8 +314,24 @@ async def delete_profile(name: str, user: User = Depends(get_current_user)):
 @router.post("/cdp/navigate")
 @cdp_handler
 async def navigate(req: NavigateRequest, user: User = Depends(get_current_user)):
-    result = await cdp.navigate(req.url, tab_id=req.tab_id)
-    return {"status": "ok", "result": result}
+    try:
+        result = await cdp.navigate(
+            req.url,
+            tab_id=req.tab_id,
+            wait_for=req.wait_for,
+            wait_strategy=req.wait_strategy,
+            timeout=req.timeout,
+            extract=req.extract,
+            dismiss_obstacles=req.dismiss_obstacles,
+            referer=req.referer,
+            viewport=req.viewport,
+            human_pause=req.human_pause,
+        )
+        return {"status": "ok", "result": result}
+    except NavigationError as e:
+        raise HTTPException(status_code=400, detail={
+            "error": "NAVIGATION_ERROR", "message": str(e)
+        })
 
 
 @router.get("/cdp/content")

@@ -193,11 +193,15 @@ TOOL_DEFINITIONS = [
         "type": "function",
         "function": {
             "name": "cdp_navigate",
-            "description": "Navigate Chrome to a URL.",
+            "description": "Navigate Chrome to a URL. Supports smart wait, structured extraction, and auto-dismiss cookie banners.",
             "parameters": {
                 "type": "object",
                 "properties": {
                     "url": {"type": "string", "description": "The URL to navigate to"},
+                    "wait_for": {"type": "string", "description": "CSS selector to wait for (used with wait_strategy='selector')"},
+                    "wait_strategy": {"type": "string", "description": "Wait strategy: none (default), dom, network_idle, smart, selector", "enum": ["none", "dom", "network_idle", "smart", "selector"]},
+                    "extract": {"type": "boolean", "description": "Extract structured page data (title, links, images, page type)"},
+                    "dismiss_obstacles": {"type": "boolean", "description": "Auto-dismiss cookie banners and popups"},
                 },
                 "required": ["url"],
             },
@@ -928,8 +932,23 @@ async def _handle_cdp_tabs(**kwargs) -> dict:
 
 
 async def _handle_cdp_navigate(**kwargs) -> dict:
-    from core.cdp_bridge import cdp
-    return {"status": "ok", "result": await cdp.navigate(kwargs["url"])}
+    from core.cdp_bridge import cdp, NavigationError
+    try:
+        result = await cdp.navigate(
+            kwargs["url"],
+            tab_id=kwargs.get("tab_id"),
+            wait_for=kwargs.get("wait_for"),
+            wait_strategy=kwargs.get("wait_strategy", "none"),
+            timeout=kwargs.get("timeout", 30.0),
+            extract=kwargs.get("extract", False),
+            dismiss_obstacles=kwargs.get("dismiss_obstacles", False),
+            referer=kwargs.get("referer"),
+            viewport=kwargs.get("viewport"),
+            human_pause=kwargs.get("human_pause", True),
+        )
+        return {"status": "ok", "result": result}
+    except NavigationError as e:
+        return {"status": "error", "error": str(e)}
 
 
 async def _handle_cdp_get_content(**kwargs) -> dict:

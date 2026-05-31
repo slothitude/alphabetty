@@ -1,14 +1,17 @@
 """CDP Bridge — WebSocket client for Chrome DevTools Protocol.
 
 Connects to the undetected Chrome instance launched by core/chrome.py.
-Adds stealth JS injection and human-like mouse/keyboard simulation.
+Adds stealth JS injection, human-like mouse/keyboard simulation,
+smart navigation wait, structured extraction, and obstacle detection.
 """
 
 import asyncio
 import json
 import logging
 import random
-from typing import Any
+import time
+from typing import Any, Optional
+from urllib.parse import urlparse
 
 import httpx
 import websockets
@@ -127,7 +130,280 @@ Function.prototype.toString = function() {
     if (patchedFunctions.has(this)) return patchedFunctions.get(this);
     return origToStr.call(this);
 };
+
+// Canvas fingerprint noise
+const origGetContext = HTMLCanvasElement.prototype.getContext;
+HTMLCanvasElement.prototype.getContext = function(type, attrs) {
+    const ctx = origGetContext.call(this, type, attrs);
+    if (type === '2d') {
+        const origGetImageData = ctx.getImageData.bind(ctx);
+        ctx.getImageData = function(x, y, w, h) {
+            const imageData = origGetImageData(x, y, w, h);
+            // Subtle pixel XOR on random pixels
+            for (let i = 0; i < imageData.data.length; i += 4) {
+                if (Math.random() > 0.98) {
+                    imageData.data[i] ^= 1;
+                }
+            }
+            return imageData;
+        };
+    }
+    return ctx;
+};
+
+// navigator.hardwareConcurrency
+Object.defineProperty(navigator, 'hardwareConcurrency', {get: () => 8});
+
+// navigator.platform
+Object.defineProperty(navigator, 'platform', {get: () => 'Win32'});
+
+// Screen consistency
+Object.defineProperty(screen, 'width', {get: () => 1920});
+Object.defineProperty(screen, 'height', {get: () => 1080});
+Object.defineProperty(screen, 'availWidth', {get: () => 1920});
+Object.defineProperty(screen, 'availHeight', {get: () => 1040});
+Object.defineProperty(screen, 'colorDepth', {get: () => 24});
 """
+
+
+# ─── Structured Extraction JS ───
+
+EXTRACT_STRUCTURED_JS = """
+(async () => {
+    const meta = {};
+
+    // Open Graph metadata
+    const getMeta = (selectors) => {
+        for (const sel of selectors) {
+            const el = document.querySelector(sel);
+            if (el) return el.getAttribute('content') || el.textContent;
+        }
+        return null;
+    };
+    meta.title = getMeta(['meta[property="og:title"]', 'title']);
+    meta.description = getMeta(['meta[property="og:description"]', 'meta[name="description"]']);
+    meta.image = getMeta(['meta[property="og:image"]']);
+    meta.author = getMeta(['meta[name="author"]']);
+    meta.robots = getMeta(['meta[name="robots"]']);
+
+    // Schema.org JSON-LD
+    const schemas = [];
+    document.querySelectorAll('script[type="application/ld+json"]').forEach(el => {
+        try { schemas.push(JSON.parse(el.textContent)); } catch(e) {}
+    });
+
+    // Headings hierarchy
+    const headings = [];
+    document.querySelectorAll('h1, h2, h3, h4, h5, h6').forEach(el => {
+        headings.push({level: parseInt(el.tagName[1]), text: el.textContent.trim().substring(0, 200), id: el.id || null});
+    });
+
+    // Links (top 50)
+    const links = [];
+    document.querySelectorAll('a[href]').forEach(el => {
+        if (links.length >= 50) return;
+        const href = el.getAttribute('href');
+        const text = el.textContent.trim();
+        if (href && !href.startsWith('#') && !href.startsWith('javascript:') && text) {
+            links.push({text: text.substring(0, 100), href: href.substring(0, 500)});
+        }
+    });
+
+    // Images (top 20)
+    const images = [];
+    document.querySelectorAll('img').forEach(el => {
+        if (images.length >= 20) return;
+        const src = el.getAttribute('src') || el.getAttribute('data-src');
+        if (src) {
+            images.push({src: src.substring(0, 500), alt: (el.alt || '').substring(0, 100), width: el.naturalWidth || 0, height: el.naturalHeight || 0});
+        }
+    });
+
+    // Tables (up to 3)
+    const tables = [];
+    document.querySelectorAll('table').forEach((table, idx) => {
+        if (idx >= 3) return;
+        const rows = [];
+        const headerCells = [];
+        table.querySelectorAll('thead th, tr:first-child td, tr:first-child th').forEach(cell => {
+            headerCells.push(cell.textContent.trim().substring(0, 100));
+        });
+        table.querySelectorAll('tbody tr, tr').forEach((row, ri) => {
+            if (headerCells.length > 0 && ri === 0) return;
+            const cells = [];
+            row.querySelectorAll('td').forEach(cell => {
+                cells.push(cell.textContent.trim().substring(0, 500));
+            });
+            if (cells.length > 0) {
+                const obj = {};
+                headerCells.forEach((h, i) => { obj[h] = cells[i] || ''; });
+                rows.push(obj);
+            }
+        });
+        if (rows.length > 0) tables.push(rows);
+    });
+
+    // Page type classification
+    const url = location.href.toLowerCase();
+    const bodyText = document.body?.innerText?.toLowerCase() || '';
+    const title = document.title?.toLowerCase() || '';
+    let page_type = 'content';
+    if (/login|signin|sign-in|auth/i.test(url + title)) page_type = 'auth';
+    else if (/search|google|bing|duckduckgo/i.test(url)) page_type = 'search';
+    else if (/(article|post|blog|story|news)/.test(url + title)) page_type = 'article';
+    else if (/shop|cart|checkout|product|amazon|ebay/i.test(url + title)) page_type = 'ecommerce';
+    else if (/dashboard|admin|panel|settings/.test(url + title)) page_type = 'dashboard';
+    else if (/youtube|vimeo|twitch|video/i.test(url + title)) page_type = 'video';
+    else if (/register|signup|create.account/.test(url + title)) page_type = 'form';
+    else if (document.querySelector('input[type="email"], input[type="password"]')) page_type = 'auth';
+
+    // Word count and language
+    const wordCount = bodyText.split(/\\s+/).filter(w => w.length > 0).length;
+    const lang = document.documentElement.lang || 'unknown';
+
+    return {
+        meta, schemas: schemas.slice(0, 3), headings, links, images, tables,
+        page_type, word_count: wordCount, language: lang,
+        url: location.href,
+        document_title: document.title || '',
+    };
+})()
+"""
+
+
+# ─── Obstacle Detection JS ───
+
+OBSTACLE_DETECT_JS = """
+(() => {
+    const obstacles = {};
+
+    // Cookie banner detection
+    const cookieSels = [
+        '[class*="cookie" i]', '[id*="cookie" i]', '[id*="consent" i]',
+        '#onetrust-banner', '#onetrust-consent-sdk', '.cc-banner',
+        '[class*="cookie-consent" i]', '[class*="cookiebanner" i]',
+        '[class*="CookieBanner" i]', '[class*="consent-banner" i]',
+        '[aria-label*="cookie" i]', '[aria-label*="consent" i]',
+    ];
+    for (const sel of cookieSels) {
+        const el = document.querySelector(sel);
+        if (el && el.offsetHeight > 0) {
+            obstacles.cookie_banner = sel;
+            break;
+        }
+    }
+
+    // Paywall detection
+    const bodyText = document.body?.innerText?.substring(0, 5000) || '';
+    if (/subscribe|paywall|premium|sign in to continue|log in to continue/i.test(bodyText)) {
+        if (document.querySelector('[class*="paywall" i], [class*="subscribe" i], [class*="premium" i]')) {
+            obstacles.paywall = 'detected';
+        }
+    }
+
+    // CAPTCHA detection
+    if (document.querySelector('.g-recaptcha, iframe[src*="recaptcha"], .h-captcha, iframe[src*="hcaptcha"], [class*="captcha" i]')) {
+        obstacles.captcha = 'detected';
+    }
+
+    // Cloudflare challenge
+    if (document.querySelector('#challenge-running, .cf-browser-verification, #cf-challenge-running')) {
+        obstacles.cloudflare = 'detected';
+    }
+    if (/just a moment|checking your browser|cloudflare/i.test(document.title || '')) {
+        obstacles.cloudflare = 'title_check';
+    }
+
+    // Popup/modal detection
+    const dialogs = document.querySelectorAll('[role="dialog"], [class*="modal" i], [class*="popup" i]');
+    for (const d of dialogs) {
+        const rect = d.getBoundingClientRect();
+        if (rect.width > 200 && rect.height > 200 && rect.width < window.innerWidth * 0.9) {
+            obstacles.popup = 'detected';
+            break;
+        }
+    }
+
+    // Login wall detection
+    if (/sign in to read|log in to continue|login required/i.test(bodyText)) {
+        obstacles.login_wall = 'detected';
+    }
+
+    return obstacles;
+})()
+"""
+
+
+# ─── Obstacle Dismissal JS ───
+
+OBSTACLE_DISMISS_COOKIE_JS = """
+(() => {
+    const btnSels = [
+        'button[class*="accept" i]', 'button[class*="agree" i]',
+        'button[class*="dismiss" i]', 'button[class*="close" i]',
+        'a[class*="accept" i]', 'a[class*="agree" i]',
+        '[class*="cookie"] button', '[id*="cookie"] button',
+        '[class*="consent"] button', '[class*="consent"] a',
+        '.cc-btn', '.cc-dismiss', '#onetrust-accept-btn-handler',
+        'button[aria-label*="accept" i]', 'button[aria-label*="cookie" i]',
+    ];
+    for (const sel of btnSels) {
+        const el = document.querySelector(sel);
+        if (el && el.offsetHeight > 0) {
+            el.click();
+            return 'clicked: ' + sel;
+        }
+    }
+    // Fallback: hide cookie banners
+    const hideSels = [
+        '[class*="cookie" i]', '[id*="cookie" i]', '[id*="consent" i]',
+        '#onetrust-banner', '.cc-banner', '[class*="cookie-consent" i]',
+    ];
+    for (const sel of hideSels) {
+        const el = document.querySelector(sel);
+        if (el) {
+            el.style.display = 'none';
+            return 'hidden: ' + sel;
+        }
+    }
+    return 'none_found';
+})()
+"""
+
+OBSTACLE_DISMISS_POPUP_JS = """
+(() => {
+    const closeSels = [
+        '[role="dialog"] button[class*="close" i]',
+        '[role="dialog"] [aria-label*="close" i]',
+        '[class*="modal"] button[class*="close" i]',
+        '[class*="popup"] button[class*="close" i]',
+        '[role="dialog"] button[aria-label*="dismiss" i]',
+        '.modal-close', '.popup-close', '.close-modal',
+    ];
+    for (const sel of closeSels) {
+        const el = document.querySelector(sel);
+        if (el && el.offsetHeight > 0) {
+            el.click();
+            return 'clicked: ' + sel;
+        }
+    }
+    // Fallback: hide popups
+    const popups = document.querySelectorAll('[role="dialog"], [class*="modal" i], [class*="popup" i]');
+    for (const p of popups) {
+        const rect = p.getBoundingClientRect();
+        if (rect.width > 200 && rect.height > 200) {
+            p.style.display = 'none';
+            return 'hidden';
+        }
+    }
+    return 'none_found';
+})()
+"""
+
+
+class NavigationError(Exception):
+    """Raised when Page.navigate returns an errorText."""
+    pass
 
 
 class CDPBridge:
@@ -136,7 +412,7 @@ class CDPBridge:
     def __init__(self, cdp_url: str = None):
         self.cdp_url = cdp_url or settings.cdp_url
         self._msg_id = 0
-        self._stealth_injected = False
+        self._stealth_injected: dict[str, bool] = {}  # Per-tab stealth injection flag
         self._lock = asyncio.Lock()  # Global fallback lock
         self._tab_locks: dict[str, asyncio.Lock] = {}  # Per-tab serialization
         self._session_file = "/data/tabs_session.json"  # Persisted tab state
@@ -217,9 +493,10 @@ class CDPBridge:
     async def send_command(self, method: str, params: dict = None,
                            tab_id: str = None, timeout: float = 30.0) -> dict:
         ws_url = await self.get_ws_url(tab_id)
+        tab_key = tab_id or "_default"
         async with websockets.connect(ws_url, max_size=10 * 1024 * 1024) as ws:
             # Inject stealth JS on first connection to a page
-            if not self._stealth_injected and "page" in ws_url:
+            if not self._stealth_injected.get(tab_key) and "page" in ws_url:
                 try:
                     stealth_id = self._next_id()
                     await ws.send(json.dumps({
@@ -228,7 +505,7 @@ class CDPBridge:
                         "params": {"source": STEALTH_JS},
                     }))
                     await asyncio.wait_for(ws.recv(), timeout=timeout)
-                    self._stealth_injected = True
+                    self._stealth_injected[tab_key] = True
                     logger.info("Stealth JS injected via CDP")
                 except Exception as e:
                     logger.warning(f"Stealth injection via CDP failed: {e}")
@@ -263,26 +540,343 @@ class CDPBridge:
     async def _get_ws(self, tab_id: str = None):
         """Get an open WebSocket connection to the active page tab."""
         ws_url = await self.get_ws_url(tab_id)
+        tab_key = tab_id or "_default"
         ws = await websockets.connect(ws_url, max_size=10 * 1024 * 1024).__aenter__()
-        if not self._stealth_injected:
+        if not self._stealth_injected.get(tab_key):
             try:
                 await self._send_on_ws(ws, "Page.addScriptToEvaluateOnNewDocument",
                                        {"source": STEALTH_JS})
-                self._stealth_injected = True
+                self._stealth_injected[tab_key] = True
             except Exception:
                 pass
         return ws
 
-    async def navigate(self, url: str, tab_id: str = None) -> dict:
-        """Navigate — resets stealth flag so it gets re-injected."""
+    async def navigate(self, url: str, tab_id: str = None,
+                       wait_for: str = None, wait_strategy: str = "none",
+                       timeout: float = 30.0, extract: bool = False,
+                       dismiss_obstacles: bool = False,
+                       referer: Optional[str] = None,
+                       viewport: Optional[dict] = None,
+                       human_pause: bool = True) -> dict:
+        """Navigate Chrome to a URL with optional smart wait, extraction, and obstacle handling.
+
+        Args:
+            url: URL to navigate to.
+            tab_id: Target tab ID (None = first page tab).
+            wait_for: CSS selector to wait for (used with wait_strategy="selector").
+            wait_strategy: "none" (fire-and-forget), "dom", "network_idle", "smart", "selector".
+            timeout: Max time in seconds for the entire operation.
+            extract: Run structured extraction and include in result.
+            dismiss_obstacles: Auto-dismiss cookie banners and popups.
+            referer: Referer header to send.
+            viewport: {"width": int, "height": int} for viewport override.
+            human_pause: Add human-like pause and anti-detection.
+
+        Returns:
+            dict with frameId, loaderId, url, and optional wait/obstacles/extraction keys.
+        """
         if _recorder and _recorder.recording:
             _recorder.record_step("navigate", {"url": url})
-        async with self._get_tab_lock(tab_id):
-            self._stealth_injected = False
-            result = await self.send_command("Page.navigate", {"url": url}, tab_id=tab_id)
+
+        tab_key = tab_id or "_default"
+        deadline = time.monotonic() + timeout
+        nav_result = {}
+
+        # Phase 1: Send Page.navigate
+        lock = self._get_tab_lock(tab_id)
+        async with lock:
+            self._stealth_injected[tab_key] = False
+            ws = await self._get_ws(tab_id)
+            try:
+                # Set referer if provided
+                if referer:
+                    try:
+                        await self._send_on_ws(ws, "Network.setExtraHTTPHeaders",
+                                               {"headers": {"Referer": referer}})
+                    except Exception:
+                        pass
+
+                # Set viewport if provided
+                if viewport:
+                    try:
+                        await self._send_on_ws(ws, "Emulation.setDeviceMetricsOverride", {
+                            "width": viewport.get("width", 1920),
+                            "height": viewport.get("height", 1080),
+                            "deviceScaleFactor": 1,
+                            "mobile": False,
+                        })
+                    except Exception:
+                        pass
+
+                # Anti-detection: viewport jitter when no explicit viewport
+                if not viewport and human_pause:
+                    try:
+                        base_w, base_h = 1920, 1080
+                        jw = base_w + random.randint(-50, 50)
+                        jh = base_h + random.randint(-50, 50)
+                        await self._send_on_ws(ws, "Emulation.setDeviceMetricsOverride", {
+                            "width": jw, "height": jh,
+                            "deviceScaleFactor": 1, "mobile": False,
+                        })
+                    except Exception:
+                        pass
+
+                # Anti-detection: referer spoofing when no explicit referer
+                if not referer and human_pause:
+                    try:
+                        parsed = urlparse(url)
+                        domain = parsed.hostname or ""
+                        fake_ref = f"https://www.google.com/search?q={domain}"
+                        await self._send_on_ws(ws, "Network.setExtraHTTPHeaders",
+                                               {"headers": {"Referer": fake_ref}})
+                    except Exception:
+                        pass
+
+                # Send Page.navigate
+                result = await self._send_on_ws(ws, "Page.navigate", {"url": url})
+                if result.get("errorText"):
+                    raise NavigationError(result["errorText"])
+
+                frame_id = result.get("frameId", "")
+                loader_id = result.get("loaderId", "")
+                nav_result = {"frameId": frame_id, "loaderId": loader_id, "url": url}
+            except NavigationError:
+                raise
+            except Exception:
+                raise
+            finally:
+                try:
+                    await ws.close()
+                except Exception:
+                    pass
+
+        # Phase 2: Wait for load (outside tab lock for concurrency)
+        wait_result = None
+        if wait_strategy != "none":
+            ws = await self._get_ws(tab_id)
+            try:
+                wait_result = await self._wait_for_load(
+                    ws, tab_id, wait_for, wait_strategy, deadline)
+                nav_result["wait"] = wait_result
+            except websockets.exceptions.ConnectionClosed:
+                nav_result["wait"] = {"strategy": wait_strategy, "waited_ms": 0,
+                                       "error": "ws_closed"}
+            except Exception as e:
+                nav_result["wait"] = {"strategy": wait_strategy, "waited_ms": 0,
+                                       "error": str(e)}
+            finally:
+                try:
+                    await ws.close()
+                except Exception:
+                    pass
+
+        # Phase 3: Obstacle detection and dismissal + extraction (re-acquire lock)
+        async with lock:
+            if dismiss_obstacles or extract:
+                ws = await self._get_ws(tab_id)
+                try:
+                    if dismiss_obstacles:
+                        obstacles = await self._detect_and_dismiss_obstacles(ws, tab_id)
+                        nav_result["obstacles"] = obstacles
+
+                    if extract:
+                        extraction = await self._extract_structured(ws, tab_id)
+                        nav_result["extraction"] = extraction
+                except websockets.exceptions.ConnectionClosed:
+                    pass
+                except Exception as e:
+                    logger.warning(f"Post-navigation phase failed: {e}")
+                finally:
+                    try:
+                        await ws.close()
+                    except Exception:
+                        pass
+
+        # Human pause
+        if human_pause:
+            await asyncio.sleep(random.uniform(0.2, 0.8))
+
         from core.events import emit
         emit("page.loaded", {"url": url})
-        return result
+        return nav_result
+
+    async def _wait_for_load(self, ws, tab_id: str, wait_for: Optional[str],
+                              strategy: str, deadline: float) -> dict:
+        """Wait for page load using persistent WebSocket and raw recv loop.
+
+        Args:
+            ws: Open WebSocket connection.
+            tab_id: Tab identifier.
+            wait_for: CSS selector (for selector strategy).
+            strategy: "dom", "network_idle", "smart", or "selector".
+            deadline: Absolute timestamp for timeout.
+
+        Returns:
+            dict with strategy, waited_ms, load_event, network_idle, selector_found.
+        """
+        start = time.monotonic()
+        loop = asyncio.get_event_loop()
+
+        load_event_fired = False
+        network_idle = False
+        last_network_activity = start
+        nav_error = None
+
+        # Send Page.enable and Network.enable via safe send
+        try:
+            await self._send_on_ws(ws, "Page.enable")
+            await self._send_on_ws(ws, "Network.enable")
+        except Exception as e:
+            return {"strategy": strategy, "waited_ms": 0, "error": f"enable failed: {e}"}
+
+        try:
+            while True:
+                remaining = deadline - time.monotonic()
+                if remaining <= 0:
+                    break
+
+                try:
+                    raw = await asyncio.wait_for(ws.recv(), timeout=min(remaining, 1.0))
+                except asyncio.TimeoutError:
+                    # Check network idle (500ms since last Network.* event)
+                    if strategy in ("network_idle", "smart"):
+                        if time.monotonic() - last_network_activity > 0.5:
+                            network_idle = True
+                            if strategy == "network_idle" or load_event_fired:
+                                break
+                    continue
+
+                try:
+                    msg = json.loads(raw)
+                except json.JSONDecodeError:
+                    continue
+
+                # Command responses (have "id") — discard
+                if "id" in msg:
+                    continue
+
+                # Events (have "method")
+                method = msg.get("method", "")
+
+                if method == "Page.loadEventFired":
+                    load_event_fired = True
+                    if strategy == "smart" or strategy == "dom":
+                        # smart: also wait for network idle
+                        # dom: done
+                        if strategy == "dom":
+                            break
+
+                elif method.startswith("Network.") and not method.startswith("Network.requestWillBeSent"):
+                    last_network_activity = time.monotonic()
+
+                    if method == "Network.loadingFailed":
+                        params = msg.get("params", {})
+                        if not params.get("encodedDataLength"):
+                            nav_error = "loading_failed"
+
+                    if strategy in ("network_idle", "smart"):
+                        # Will check idle on next recv timeout
+                        pass
+        except websockets.exceptions.ConnectionClosed:
+            pass
+
+        waited_ms = int((time.monotonic() - start) * 1000)
+
+        # Selector poll if needed
+        selector_found = False
+        if wait_for and (strategy == "selector" or (strategy == "smart" and load_event_fired)):
+            try:
+                for _ in range(int(max(0, deadline - time.monotonic()) / 0.3)):
+                    if time.monotonic() >= deadline:
+                        break
+                    await self._send_on_ws(ws, "Runtime.evaluate", {
+                        "expression": f'document.querySelector("{wait_for}") !== null',
+                        "returnByValue": True,
+                    })
+                    # Read response from the evaluate
+                    raw = await asyncio.wait_for(ws.recv(), timeout=2.0)
+                    resp = json.loads(raw)
+                    if resp.get("result", {}).get("result", {}).get("value") is True:
+                        selector_found = True
+                        break
+                    await asyncio.sleep(0.3)
+            except Exception:
+                pass
+
+        # Disable network events before extraction
+        try:
+            await self._send_on_ws(ws, "Network.disable")
+        except Exception:
+            pass
+
+        return {
+            "strategy": strategy,
+            "waited_ms": waited_ms,
+            "load_event": load_event_fired,
+            "network_idle": network_idle,
+            "selector_found": selector_found,
+            **({"nav_error": nav_error} if nav_error else {}),
+        }
+
+    async def _detect_and_dismiss_obstacles(self, ws, tab_id: str) -> dict:
+        """Detect and auto-dismiss cookie banners and popups.
+
+        Returns dict of detected obstacles.
+        """
+        try:
+            result = await self._send_on_ws(ws, "Runtime.evaluate", {
+                "expression": OBSTACLE_DETECT_JS,
+                "returnByValue": True,
+            })
+            obstacles = result.get("result", {}).get("value", {})
+            if not isinstance(obstacles, dict):
+                obstacles = {}
+        except Exception:
+            obstacles = {}
+
+        # Dismiss cookie banners
+        if "cookie_banner" in obstacles:
+            try:
+                await self._send_on_ws(ws, "Runtime.evaluate", {
+                    "expression": OBSTACLE_DISMISS_COOKIE_JS,
+                    "returnByValue": True,
+                })
+                await asyncio.sleep(0.3)
+            except Exception:
+                pass
+
+        # Dismiss popups
+        if "popup" in obstacles:
+            try:
+                await self._send_on_ws(ws, "Runtime.evaluate", {
+                    "expression": OBSTACLE_DISMISS_POPUP_JS,
+                    "returnByValue": True,
+                })
+                await asyncio.sleep(0.3)
+            except Exception:
+                pass
+
+        return obstacles
+
+    async def _extract_structured(self, ws, tab_id: str) -> dict:
+        """Run structured extraction JS and return parsed result.
+
+        Network.disable must have been called before this to avoid
+        multiplexing issues on the WS recv loop.
+        """
+        try:
+            result = await self._send_on_ws(ws, "Runtime.evaluate", {
+                "expression": EXTRACT_STRUCTURED_JS,
+                "returnByValue": True,
+                "awaitPromise": True,
+            })
+            value = result.get("result", {}).get("value")
+            if isinstance(value, dict):
+                return value
+            return {}
+        except Exception as e:
+            logger.warning(f"Structured extraction failed: {e}")
+            return {}
 
     async def get_content(self, tab_id: str = None) -> str:
         result = await self.send_command(

@@ -258,16 +258,44 @@ async def cdp_tabs() -> str:
 
 
 @mcp.tool()
-async def cdp_navigate(url: str, tab_id: str = "") -> str:
+async def cdp_navigate(url: str, tab_id: str = "", wait_for: str = "",
+                       wait_strategy: str = "none", timeout: float = 30.0,
+                       extract: bool = False, dismiss_obstacles: bool = False,
+                       referer: Optional[str] = None,
+                       human_pause: bool = True) -> str:
     """Navigate Chrome to a URL.
+
+    Supports smart wait strategies, structured extraction, and automatic
+    obstacle dismissal (cookie banners, popups).
 
     Args:
         url: The URL to navigate to
         tab_id: Target tab ID (optional, defaults to first page tab)
+        wait_for: CSS selector to wait for (used with wait_strategy="selector")
+        wait_strategy: Wait strategy: "none" (default), "dom", "network_idle", "smart", "selector"
+        timeout: Max time in seconds (default 30)
+        extract: Extract structured page data (title, links, images, page type, etc.)
+        dismiss_obstacles: Auto-dismiss cookie banners and popups
+        referer: Referer header to send
+        human_pause: Add human-like pause and anti-detection (default True)
     """
     payload = {"url": url}
     if tab_id:
         payload["tab_id"] = tab_id
+    if wait_for:
+        payload["wait_for"] = wait_for
+    if wait_strategy != "none":
+        payload["wait_strategy"] = wait_strategy
+    if timeout != 30.0:
+        payload["timeout"] = timeout
+    if extract:
+        payload["extract"] = True
+    if dismiss_obstacles:
+        payload["dismiss_obstacles"] = True
+    if referer:
+        payload["referer"] = referer
+    if not human_pause:
+        payload["human_pause"] = False
     return json.dumps(await _post("/api/cdp/navigate", payload))
 
 
@@ -610,7 +638,25 @@ async def analyze_file(filename: str, query: str) -> str:
     return json.dumps(await _post("/api/files/analyze", {"filename": filename, "query": query}))
 
 
-# ─── Images ───
+# ─── Image Generation (Bonsai) ───
+
+@mcp.tool()
+async def image_start() -> str:
+    """Start the Bonsai Image backend on Lappy via SSH."""
+    return json.dumps(await _post("/api/images/start"))
+
+
+@mcp.tool()
+async def image_stop() -> str:
+    """Stop the Bonsai Image backend on Lappy. Kills the uvicorn process serving on port 8000."""
+    return json.dumps(await _post("/api/images/stop"))
+
+
+@mcp.tool()
+async def image_status() -> str:
+    """Check if the Bonsai Image backend is running and healthy. Returns VRAM usage and model info."""
+    return json.dumps(await _get("/api/images/status"))
+
 
 @mcp.tool()
 async def generate_image(prompt: str, negative_prompt: str = "",
@@ -627,6 +673,52 @@ async def generate_image(prompt: str, negative_prompt: str = "",
     return json.dumps(await _post("/api/images/generate", {
         "prompt": prompt, "negative_prompt": negative_prompt,
         "width": width, "height": height, "steps": steps,
+    }))
+
+
+# ─── Vision / Image Analysis (Florence-2) ───
+
+@mcp.tool()
+async def vision_start() -> str:
+    """Start the Florence-2 vision backend on Lappy via SSH."""
+    return json.dumps(await _post("/api/vision/start"))
+
+
+@mcp.tool()
+async def vision_stop() -> str:
+    """Stop the Florence-2 backend on Lappy. Kills the uvicorn process serving on port 8001."""
+    return json.dumps(await _post("/api/vision/stop"))
+
+
+@mcp.tool()
+async def vision_status() -> str:
+    """Check if Florence-2 is running and healthy. Returns VRAM usage and model info."""
+    return json.dumps(await _get("/api/vision/status"))
+
+
+@mcp.tool()
+async def analyze_image(image_source: str, prompt: str) -> str:
+    """Analyze an image using advanced AI vision models.
+
+    Args:
+        imageSource: Remote URL to the image (supports PNG, JPG, JPEG)
+        prompt: Detailed text prompt. If the task is **front-end code replication**, the prompt you provide must be: "Describe in detail the layout structure, color style, main components, and interactive elements of the website in this image to facilitate subsequent code generation by the model." + your additional requirements. \\ For **other tasks**, the prompt you provide must clearly describe what to analyze, extract, or understand from the image.
+    """
+    return json.dumps(await _post("/api/vision/analyze", {
+        "image_url": image_source, "prompt": prompt,
+    }))
+
+
+@mcp.tool()
+async def ocr_image(image_url: str) -> str:
+    """Extract text from an image (OCR). Pass a URL to the image.
+    Returns the extracted text content.
+
+    Args:
+        image_url: Remote URL to the image (supports PNG, JPG, JPEG)
+    """
+    return json.dumps(await _post("/api/vision/ocr", {
+        "image_url": image_url,
     }))
 
 

@@ -25,49 +25,12 @@ WINDOW_SIZE = os.environ.get("ALPHABETTY_CHROME_WINDOW_SIZE", "1920,1080")
 LOW_RAM = os.environ.get("ALPHABETTY_LOW_RAM", "").lower() in ("1", "true", "yes")
 CDP_URL = f"http://localhost:{CDP_PORT}"
 
-# Stealth JS injected on every page load via CDP
-STEALTH_JS = """
-// navigator.webdriver = undefined
-Object.defineProperty(navigator, 'webdriver', {get: () => undefined});
+# chrome.py runs as standalone script — add /app to path for imports
+if os.path.dirname(__file__).endswith("core"):
+    sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
 
-// Realistic plugins array
-Object.defineProperty(navigator, 'plugins', {
-    get: () => {
-        const arr = [
-            {name: 'Chrome PDF Plugin', filename: 'internal-pdf-viewer'},
-            {name: 'Chrome PDF Viewer', filename: 'mhjfbmdgcfjbbpaeojofohoefgiehjai'},
-            {name: 'Native Client', filename: 'internal-nacl-plugin'},
-        ];
-        arr.refresh = () => {};
-        return arr;
-    },
-});
-
-// Languages
-Object.defineProperty(navigator, 'languages', {get: () => ['en-US', 'en']});
-
-// Chrome runtime
-if (!window.chrome) window.chrome = {};
-window.chrome.runtime = {};
-window.chrome.loadTimes = function() { return {}; };
-window.chrome.csi = function() { return {}; };
-window.chrome.app = { isInstalled: false };
-
-// Permissions
-const origQuery = window.navigator.permissions.query;
-window.navigator.permissions.query = (params) =>
-    params.name === 'notifications'
-        ? Promise.resolve({ state: Notification.permission })
-        : origQuery(params);
-
-// WebGL fingerprint spoofing
-const glParam = WebGLRenderingContext.prototype.getParameter;
-WebGLRenderingContext.prototype.getParameter = function(p) {
-    if (p === 37445) return 'Intel Inc.';
-    if (p === 37446) return 'Intel Iris OpenGL Engine';
-    return glParam.call(this, p);
-};
-"""
+# Import consolidated stealth JS from cdp_bridge
+from core.cdp_bridge import STEALTH_JS
 
 
 def wait_for_cdp(timeout: int = 30) -> bool:
