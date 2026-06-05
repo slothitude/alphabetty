@@ -262,7 +262,7 @@ async def cdp_navigate(url: str, tab_id: str = "", wait_for: str = "",
                        wait_strategy: str = "none", timeout: float = 30.0,
                        extract: bool = False, dismiss_obstacles: bool = False,
                        referer: Optional[str] = None,
-                       human_pause: bool = True) -> str:
+                       human_pause: bool = False) -> str:
     """Navigate Chrome to a URL.
 
     Supports smart wait strategies, structured extraction, and automatic
@@ -294,8 +294,8 @@ async def cdp_navigate(url: str, tab_id: str = "", wait_for: str = "",
         payload["dismiss_obstacles"] = True
     if referer:
         payload["referer"] = referer
-    if not human_pause:
-        payload["human_pause"] = False
+    if human_pause:
+        payload["human_pause"] = True
     return json.dumps(await _post("/api/cdp/navigate", payload))
 
 

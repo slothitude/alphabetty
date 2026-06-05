@@ -416,6 +416,9 @@ class CDPBridge:
         self._lock = asyncio.Lock()  # Global fallback lock
         self._tab_locks: dict[str, asyncio.Lock] = {}  # Per-tab serialization
         self._session_file = "/data/tabs_session.json"  # Persisted tab state
+        self._ws_url_cache: dict[str, str] = {}  # Cached WS URLs per tab
+        self._ws_pool: dict[str, object] = {}  # Persistent WS connections per tab
+        self._headless = True  # Chrome in Docker is always headless
 
     def _get_tab_lock(self, tab_id: str | None) -> asyncio.Lock:
         """Get or create a lock for a specific tab."""
@@ -492,8 +495,11 @@ class CDPBridge:
 
     async def send_command(self, method: str, params: dict = None,
                            tab_id: str = None, timeout: float = 30.0) -> dict:
-        ws_url = await self.get_ws_url(tab_id)
         tab_key = tab_id or "_default"
+        ws_url = self._ws_url_cache.get(tab_key)
+        if not ws_url:
+            ws_url = await self.get_ws_url(tab_id)
+            self._ws_url_cache[tab_key] = ws_url
         async with websockets.connect(ws_url, max_size=10 * 1024 * 1024) as ws:
             # Inject stealth JS on first connection to a page
             if not self._stealth_injected.get(tab_key) and "page" in ws_url:
@@ -550,10 +556,41 @@ class CDPBridge:
         except asyncio.TimeoutError:
             raise TimeoutError(f"CDP command '{method}' timed out after {timeout}s")
 
+    async def _invalidate_ws(self, tab_key: str):
+        """Remove cached WS URL and close pooled connection for a tab."""
+        self._ws_url_cache.pop(tab_key, None)
+        ws = self._ws_pool.pop(tab_key, None)
+        if ws:
+            try:
+                await ws.close()
+            except Exception:
+                pass
+
     async def _get_ws(self, tab_id: str = None):
-        """Get an open WebSocket connection to the active page tab."""
-        ws_url = await self.get_ws_url(tab_id)
+        """Get an open WebSocket connection to the active page tab.
+
+        Reuses pooled connections and cached WS URLs to avoid per-call overhead.
+        """
         tab_key = tab_id or "_default"
+
+        # Return pooled connection if alive
+        ws = self._ws_pool.get(tab_key)
+        if ws and not ws.closed:
+            return ws
+        # Stale connection — clean up
+        if ws:
+            try:
+                await ws.close()
+            except Exception:
+                pass
+            self._ws_pool.pop(tab_key, None)
+
+        # Resolve WS URL — use cache or fetch
+        ws_url = self._ws_url_cache.get(tab_key)
+        if not ws_url:
+            ws_url = await self.get_ws_url(tab_id)
+            self._ws_url_cache[tab_key] = ws_url
+
         ws = await websockets.connect(ws_url, max_size=10 * 1024 * 1024).__aenter__()
         if not self._stealth_injected.get(tab_key):
             try:
@@ -562,6 +599,7 @@ class CDPBridge:
                 self._stealth_injected[tab_key] = True
             except Exception:
                 pass
+        self._ws_pool[tab_key] = ws
         return ws
 
     async def navigate(self, url: str, tab_id: str = None,
@@ -598,7 +636,6 @@ class CDPBridge:
 
         # Phase 1: Send Page.navigate (hold lock)
         async with lock:
-            self._stealth_injected[tab_key] = False
             ws = await self._get_ws(tab_id)
             try:
                 # Set referer if provided
@@ -621,8 +658,8 @@ class CDPBridge:
                     except Exception:
                         pass
 
-                # Anti-detection: viewport jitter when no explicit viewport
-                if not viewport and human_pause:
+                # Anti-detection: viewport jitter when no explicit viewport (skip in headless)
+                if not viewport and human_pause and not self._headless:
                     try:
                         base_w, base_h = 1920, 1080
                         jw = base_w + random.randint(-50, 50)
@@ -634,8 +671,8 @@ class CDPBridge:
                     except Exception:
                         pass
 
-                # Anti-detection: referer spoofing when no explicit referer
-                if not referer and human_pause:
+                # Anti-detection: referer spoofing when no explicit referer (skip in headless)
+                if not referer and human_pause and not self._headless:
                     try:
                         parsed = urlparse(url)
                         domain = parsed.hostname or ""
@@ -683,14 +720,12 @@ class CDPBridge:
                     nav_result["extraction"] = extraction
         except websockets.exceptions.ConnectionClosed:
             logger.warning("WS closed during wait/extract phase")
+            await self._invalidate_ws(tab_key)
         except Exception as e:
             logger.warning(f"Post-navigation phase failed: {e}")
-        finally:
-            if ws:
-                try:
-                    await ws.close()
-                except Exception:
-                    pass
+            # On error, invalidate so next call gets a fresh connection
+            if ws and ws.closed:
+                await self._invalidate_ws(tab_key)
 
         # Human pause
         if human_pause:
